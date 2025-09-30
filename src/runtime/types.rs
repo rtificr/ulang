@@ -27,6 +27,7 @@ pub enum Type {
     Type,
     Module,
     Builtin,
+    Reference(TypeId),
     TBD,
 }
 impl Type {
@@ -111,6 +112,13 @@ impl Type {
             Type::Type => "type".into(),
             Type::Module => "module".into(),
             Type::Builtin => "builtin".into(),
+            Type::Reference(ty) => format!(
+                "&{}",
+                typereg
+                    .resolve(*ty)
+                    .unwrap_or(&Type::Any)
+                    .to_string(strint, typereg)
+            ),
             Type::TBD => "tbd".into(),
         }
     }

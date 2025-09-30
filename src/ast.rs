@@ -73,7 +73,7 @@ pub enum Node {
     Declaration { name: StringId, ann: Option<NodeId>, value: Option<NodeId>, export: bool },
     Assign { name: StringId, value: NodeId },
     Function { params: Vec<FuncParam>, body: NodeId },
-    FunctionCall { name: StringId, args: Vec<NodeId> },
+    FunctionCall { node: NodeId, args: Vec<NodeId> },
     UnaryOp { op: Operator, expr: NodeId },
     BinaryOp { left: NodeId, op: Operator, right: NodeId },
     Block { statements: Vec<NodeId> },

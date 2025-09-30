@@ -1,7 +1,5 @@
 use crate::{
-    StringInt, TypeReg,
-    ast::{NodeId, Operator, StringId, TypeId, TypeIdent},
-    runtime::{Runtime, types::Type},
+    ast::{NodeId, Operator, StringId, TypeId, TypeIdent}, runtime::{memory::ValueId, types::Type, Runtime}, StringInt, TypeReg
 };
 use anyhow::{bail, Result};
 use std::{collections::HashMap, fmt::Display};
@@ -19,7 +17,7 @@ pub enum Value {
         elements: Vec<Value>,
     },
     Tuple(Vec<Value>),
-    Object(HashMap<String, Value>),
+    Object(HashMap<StringId, Value>),
     Function {
         params: Vec<(StringId, TypeId)>,
         body: NodeId,
@@ -28,6 +26,7 @@ pub enum Value {
     Builtin(BuiltinFn),
     Module(StringId),
     Type(TypeId),
+    Reference(ValueId),
 }
 impl Value {
     pub fn to_string(&self, strint: &StringInt, typereg: &TypeReg) -> String {
@@ -70,6 +69,7 @@ impl Value {
                     .unwrap_or(&Type::Any)
                     .to_string(strint, typereg)
             ),
+            Value::Reference(value_id) => format!("&{:?}", value_id),
         }
     }
     pub fn get_type(&self, strint: &mut StringInt, typereg: &mut TypeReg) -> TypeId {
@@ -106,6 +106,7 @@ impl Value {
             Value::Type(_) => typereg.get_or_intern(&Type::Type),
             Value::Module(_) => typereg.get_or_intern(&Type::Module),
             Value::Builtin(_) => typereg.get_or_intern(&Type::Builtin),
+            Value::Reference(value_id) => typereg.get_or_intern(&Type::Reference(self.get_type(strint, typereg))),
         }
     }
     // for making sure arraytype(type(number)) is interpreted as that and not an arrayvalue(value(type(number)))

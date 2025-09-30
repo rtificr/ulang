@@ -1,10 +1,10 @@
 use anyhow::bail;
-use pest::{iterators::Pair, Parser};
+use pest::{Parser, iterators::Pair};
 use slab::Slab;
 use string_interner::StringInterner;
 
 use crate::{
-    UParser, NodeReg, Rule, StringInt, TypeReg,
+    NodeReg, Rule, StringInt, TypeReg, UParser,
     ast::{FuncParam, Literal, Node, NodeId, Operator, Span, SpannedNode, TypeIdent},
     err::ParseError,
 };
@@ -42,7 +42,6 @@ impl Noder {
     }
 
     pub fn handle_pair(&mut self, pair: Pair<Rule>) -> anyhow::Result<Option<NodeId>> {
-        println!("Handling pair: {:?} -> {}", pair.as_rule(), pair.as_str());
         let span = Span::new(pair.as_span().start(), pair.as_span().end());
         let r = match pair.as_rule() {
             Rule::let_expr | Rule::export_let_expr => {
@@ -62,21 +61,14 @@ impl Noder {
             Rule::file => {
                 let mut ids = Vec::new();
                 for (i, inner) in pair.into_inner().enumerate() {
-                    println!("Processing expression {}: {:?}", i, inner.as_rule());
                     match self.handle_pair(inner) {
                         Ok(Some(id)) => {
-                            println!("  -> Success: node ID {:?}", id);
                             ids.push(id);
                         }
-                        Ok(None) => {
-                            println!("  -> Returned None");
-                        }
-                        Err(e) => {
-                            println!("  -> Error: {}", e);
-                        }
+                        Ok(None) => {}
+                        Err(e) => {}
                     }
                 }
-                println!("Total statements in block: {}", ids.len());
                 Some(self.insert_spanned_node(Node::Block { statements: ids }, span))
             }
             Rule::program => {
@@ -254,15 +246,6 @@ impl Noder {
                 for suffix_pair in inner_rules {
                     base_expr = match suffix_pair.as_rule() {
                         Rule::call_suffix => {
-                            // Function call - extract function name and arguments
-                            let func_name = match &self.nodes.get(base_expr).unwrap().node {
-                                Node::Identifier(name_id) => *name_id,
-                                _ => {
-                                    // Complex expressions as function names not supported yet
-                                    bail!("Complex function call expressions not yet supported");
-                                }
-                            };
-
                             let mut args = Vec::new();
                             for arg_pair in suffix_pair.into_inner() {
                                 if let Some(arg_id) = self.handle_pair(arg_pair)? {
@@ -271,7 +254,7 @@ impl Noder {
                             }
 
                             let node = Node::FunctionCall {
-                                name: func_name,
+                                node: base_expr,
                                 args,
                             };
                             self.insert_spanned_node(node, span)
@@ -280,7 +263,10 @@ impl Noder {
                             // Array/object indexing
                             let index_expr = suffix_pair.into_inner().next().unwrap();
                             let index = self.require_node(index_expr)?;
-                            let node = Node::IndexAccess { base: base_expr, index };
+                            let node = Node::IndexAccess {
+                                base: base_expr,
+                                index,
+                            };
                             self.insert_spanned_node(node, span)
                         }
                         Rule::field_suffix => {
@@ -880,8 +866,11 @@ impl Noder {
             }
             Rule::fstring => {
                 let fstring_text = pair.as_str();
-                if fstring_text.len() >= 3 && fstring_text.starts_with("f\"") && fstring_text.ends_with("\"") {
-                    let content = &fstring_text[2..fstring_text.len()-1];
+                if fstring_text.len() >= 3
+                    && fstring_text.starts_with("f\"")
+                    && fstring_text.ends_with("\"")
+                {
+                    let content = &fstring_text[2..fstring_text.len() - 1];
                     let parts = self.parse_fstring_manual(content)?;
                     let fstring_node = Node::Literal(Literal::FString { parts });
                     Some(self.insert_spanned_node(fstring_node, span))
@@ -890,23 +879,29 @@ impl Noder {
                 }
             }
             Rule::array => {
-                let inner = pair.into_inner().map(|p| self.handle_pair(p)).collect::<Vec<_>>();
+                let inner = pair
+                    .into_inner()
+                    .map(|p| self.handle_pair(p))
+                    .collect::<Vec<_>>();
                 if inner.iter().any(|r| r.is_err()) {
                     return Err(inner.into_iter().find_map(|r| r.err()).unwrap());
                 }
                 let elements: Vec<NodeId> = inner.into_iter().filter_map(|r| r.unwrap()).collect();
                 let node = Node::Literal(Literal::Array { elements });
                 Some(self.insert_spanned_node(node, span))
-            },
+            }
             Rule::tuple => {
-                let inner = pair.into_inner().map(|p| self.handle_pair(p)).collect::<Vec<_>>();
+                let inner = pair
+                    .into_inner()
+                    .map(|p| self.handle_pair(p))
+                    .collect::<Vec<_>>();
                 if inner.iter().any(|r| r.is_err()) {
                     return Err(inner.into_iter().find_map(|r| r.err()).unwrap());
                 }
                 let elements: Vec<NodeId> = inner.into_iter().filter_map(|r| r.unwrap()).collect();
                 let node = Node::Literal(Literal::Tuple { elements });
                 Some(self.insert_spanned_node(node, span))
-            },
+            }
             Rule::call_suffix | Rule::index_suffix | Rule::field_suffix => {
                 // These should not be called directly, they're handled within postfix
                 None
@@ -953,20 +948,23 @@ impl Noder {
         let mut parts = Vec::new();
         let mut current_text = String::new();
         let mut chars = content.chars().peekable();
-        
+
         // Helper function to add text part if not empty
         let add_text_part = |noder: &mut Self, text: &mut String, parts: &mut Vec<NodeId>| {
             if !text.is_empty() {
                 let unescaped = text.replace("{{", "{").replace("}}", "}");
                 let string_id = noder.strint.get_or_intern(&unescaped);
                 let node = Node::Literal(Literal::String(string_id));
-                let span = Span { start: 0, end: text.len() }; // Approximate span
+                let span = Span {
+                    start: 0,
+                    end: text.len(),
+                }; // Approximate span
                 let node_id = noder.insert_spanned_node(node, span);
                 parts.push(node_id);
                 text.clear();
             }
         };
-        
+
         while let Some(ch) = chars.next() {
             match ch {
                 '{' => {
@@ -977,11 +975,11 @@ impl Noder {
                     } else {
                         // Start of expression - add any accumulated text first
                         add_text_part(self, &mut current_text, &mut parts);
-                        
+
                         // Parse expression until closing }
                         let mut expr_text = String::new();
                         let mut brace_count = 1;
-                        
+
                         while let Some(expr_ch) = chars.next() {
                             match expr_ch {
                                 '{' => {
@@ -1000,7 +998,7 @@ impl Noder {
                                 }
                             }
                         }
-                        
+
                         // Parse the expression text using Pest
                         let trimmed_expr = expr_text.trim();
                         if !trimmed_expr.is_empty() {
@@ -1036,10 +1034,10 @@ impl Noder {
                 }
             }
         }
-        
+
         // Add any remaining text
         add_text_part(self, &mut current_text, &mut parts);
-        
+
         Ok(parts)
     }
 

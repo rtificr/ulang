@@ -1,0 +1,2 @@
+let test_fn = fn(x: number) x * 2
+let result = test_fn(5)

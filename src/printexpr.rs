@@ -135,9 +135,10 @@ pub fn print_expr(nodes: &NodeReg, strint: &StringInt, depth: usize, node_id: No
                     print_expr(nodes, strint, depth + 1, *body);
                     println!("{}}}", tabs);
                 }
-                Node::FunctionCall { name, args } => {
-                    let name = strint.resolve(*name).unwrap();
-                    println!("{}call {}(", tabs, name);
+                Node::FunctionCall { node, args } => {
+                    println!("{}call (", tabs);
+                    print_expr(nodes, strint, depth + 1, *node);
+                    println!("{}with args:", tabs);
                     for arg in args {
                         print_expr(nodes, strint, depth + 1, *arg);
                     }

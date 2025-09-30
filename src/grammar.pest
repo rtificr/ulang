@@ -3,6 +3,7 @@ program =  { expr* }
 
 expr = {
   import_expr
+  | if_expr
   | while_expr
   | function_expr
   | return_expr

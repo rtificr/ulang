@@ -1,3 +1,22 @@
-import "math3d.u"
+let x = 0
+let y = 0
 
-print(vec3dot((1, 2, 3), (1, 2, 3)))
+let screenHeight = screenHeight()
+let screenWidth = screenWidth()
+
+print("screen width: " + screenWidth)
+print("screen height: " + screenHeight)
+
+while x < screenWidth {
+    while y < screenHeight {
+        let r = x / screenWidth
+        let g = y / screenHeight
+        let b = 0.5
+        setPixel((x, y), (r, g, b))
+        y = y + 1
+    }
+    y = 0
+    x = x + 1
+    render()
+}
+

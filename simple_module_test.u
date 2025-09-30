@@ -1,0 +1,2 @@
+export let simple_func = fn(x: number) x + 1
+let test_result = simple_func(5)

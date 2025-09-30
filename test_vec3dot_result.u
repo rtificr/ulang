@@ -1,0 +1,5 @@
+let mod = import "math3d.u"
+
+// Test the actual mathematical result
+let result = mod.vec3dot((1,2,3), (1,2,3))
+print("vec3dot((1,2,3), (1,2,3)) = " + result)
