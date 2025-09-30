@@ -1,0 +1,96 @@
+file    = _{ SOI ~ program ~ EOI }
+program =  { expr* }
+
+expr = {
+  import_expr
+  | while_expr
+  | function_expr
+  | return_expr
+  | break_expr
+  | let_expr
+  | let_annotated
+  | export_let_expr
+  | export_let_annotated
+  | assignment
+  | logical_or
+  | literal
+  | block_expr
+}
+
+let_expr      = { let ~ identifier ~ "=" ~ expr }
+export_let_expr = { "export" ~ let ~ identifier ~ "=" ~ expr }
+let_annotated = { let ~ identifier ~ type_annotation ~ "=" ~ expr }
+export_let_annotated = { "export" ~ let ~ identifier ~ type_annotation ~ "=" ~ expr }
+if_expr       = { if ~ expr ~ expr ~ (else ~ (if_expr | expr))? }
+while_expr    = { while ~ expr ~ expr }
+function_expr = { fn ~ "(" ~ parameter_list? ~ ")" ~ type_annotation? ~ expr }
+return_expr   = { return ~ expr? }
+break_expr    = { break ~ expr? }
+block_expr    = { "{" ~ expr* ~ "}" }
+import_expr   = { import ~ string }
+
+parameter_list = { parameter ~ ("," ~ parameter)* }
+parameter      = { identifier ~ type_annotation? }
+
+assignment     = { identifier ~ "=" ~ expr }
+logical_or     = { logical_and ~ ("||" ~ logical_and)* }
+logical_and    = { bitwise_or ~ ("&&" ~ bitwise_or)* }
+bitwise_or     = { bitwise_xor ~ ("|" ~ bitwise_xor)* }
+bitwise_xor    = { bitwise_and ~ ("^" ~ bitwise_and)* }
+bitwise_and    = { comparison ~ ("&" ~ comparison)* }
+comparison     = { additive ~ (("==" | "!=" | "<=" | ">=" | "<" | ">") ~ additive)* }
+additive       = { multiplicative ~ (("+" | "-") ~ multiplicative)* }
+multiplicative = { exponent ~ (("*" | "/" | "%") ~ exponent)* }
+exponent       = { unary ~ ("**" ~ unary)* }
+
+unary           =  { negate | not | postfix }
+postfix         =  { primary ~ (call_suffix | index_suffix | field_suffix)* }
+call_suffix     =  { "(" ~ (expr ~ ("," ~ expr)*)? ~ ")" }
+index_suffix    =  { "[" ~ expr ~ "]" }
+field_suffix    =  { "." ~ identifier }
+primary         =  { literal | identifier | "(" ~ expr ~ ")" }
+negate          =  { "-" ~ expr }
+not             =  { "!" ~ expr }
+type_annotation =  { ":" ~ type_ident ~ SPACES }
+type_ident      =  { tuple_type | array_type | basic_type }
+basic_type      =  { identifier }
+array_type      =  { "[" ~ type_ident ~ "]" }
+tuple_type      =  { "()" | "(" ~ type_ident ~ ("," ~ type_ident)+ ~ ")" }
+
+// Keywords - defined with word boundaries
+let      = @{ "let" ~ !ASCII_ALPHANUMERIC }
+if       = @{ "if" ~ !ASCII_ALPHANUMERIC }
+else     = @{ "else" ~ !ASCII_ALPHANUMERIC } 
+while    = @{ "while" ~ !ASCII_ALPHANUMERIC }
+break    = @{ "break" ~ !ASCII_ALPHANUMERIC }
+fn       = @{ "fn" ~ !ASCII_ALPHANUMERIC }
+return   = @{ "return" ~ !ASCII_ALPHANUMERIC }
+import   = @{ "import" ~ !ASCII_ALPHANUMERIC }
+true     = @{ "true" ~ !ASCII_ALPHANUMERIC }
+false    = @{ "false" ~ !ASCII_ALPHANUMERIC }
+nil      = @{ "nil" ~ !ASCII_ALPHANUMERIC }
+
+// Identifier - must not match any keyword or f followed by quote
+identifier = @{ 
+  !(let | if | else | while | break | fn | return | import | true | false | nil) ~ 
+  !("f" ~ "\"") ~
+  (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")*
+}
+
+literal =  { number | boolean | nil | fstring | string | array | tuple }
+boolean =  { true | false }
+number  =  { hex | binary | octal | decimal }
+hex     = @{ "0x" ~ ASCII_HEX_DIGIT+ }
+binary  = @{ "0b" ~ ("0" | "1")+ }
+octal   = @{ "0o" ~ ('0'..'7')+ }
+decimal = @{ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+)? }
+array   =  { "[" ~ (expr ~ ("," ~ expr)*)? ~ "]" }
+tuple   =  { "()" | "(" ~ (expr ~ ("," ~ expr)+) ~ ")" }
+
+fstring = @{ "f" ~ "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
+string = { "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
+
+
+WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
+SPACES     = _{ WHITESPACE* }
+COMMENT    = _{ "//" ~ (!"\n" ~ ANY)* }

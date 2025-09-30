@@ -1,0 +1,32 @@
+let vec2 = (number, number)
+let vec3 = (number, number, number)
+let vec4 = (number, number, number, number)
+let mat2 = (vec2, vec2)
+let mat3 = (vec3, vec3, vec3)
+let mat4 = (vec4, vec4, vec4, vec4)
+
+let vec2dot = fn(v: vec2, w: vec2) v[0] * w[0] + v[1] * w[1]
+export let vec3dot = fn(v: vec3, w: vec3) v[0] * w[0] + v[1] * w[1] + v[2] * w[2]
+let vec4dot = fn(v: vec4, w: vec4) v[0] * w[0] + v[1] * w[1] + v[2] * w[2] + v[3] * w[3]
+
+let vec2add = fn(v: vec2, w: vec2) (v[0] + w[0], v[1] + w[1])
+let vec3add = fn(v: vec3, w: vec3) (v[0] + w[0], v[1] + w[1], v[2] + w[2])
+let vec4add = fn(v: vec4, w: vec4) (v[0] + w[0], v[1] + w[1], v[2] + w[2], v[3] + w[3])
+
+let vec2sub = fn(v: vec2, w: vec2) (v[0] - w[0], v[1] - w[1])
+let vec3sub = fn(v: vec3, w: vec3) (v[0] - w[0], v[1] - w[1], v[2] - w[2])
+let vec4sub = fn(v: vec4, w: vec4) (v[0] - w[0], v[1] - w[1], v[2] - w[2], v[3] - w[3])
+
+let vec2scale = fn(v: vec2, s: number) (v[0] * s, v[1] * s)
+let vec3scale = fn(v: vec3, s: number) (v[0] * s, v[1] * s, v[2] * s)
+let vec4scale = fn(v: vec4, s: number) (v[0] * s, v[1] * s, v[2] * s, v[3] * s)
+
+let mat2mul = fn(m: mat2, v: vec2) (
+    m[0][0] * v[0] + m[0][1] * v[1],
+    m[1][0] * v[0] + m[1][1] * v[1]
+)
+let mat3mul = fn(m: mat3, v: vec3) (
+    m[0][0] * v[0] + m[0][1] * v[1] + m[0][2] * v[2],
+    m[1][0] * v[0] + m[1][1] * v[1] + m[1][2] * v[2],
+    m[2][0] * v[0] + m[2][1] * v[1] + m[2][2] * v[2]
+)

@@ -1,0 +1,12 @@
+[package]
+name = "ulang"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.100"
+interns = "1.0.0"
+pest = "*"
+pest_derive = "*"
+slab = "0.4.11"
+string-interner = "0.19.0"
