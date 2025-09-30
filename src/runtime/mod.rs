@@ -18,7 +18,7 @@ pub mod types;
 pub mod value;
 
 pub struct Runtime<'m> {
-    pub nodes: NodeReg,
+    pub nodes: &'m mut NodeReg,
     pub strint: StringInt,
     pub typereg: TypeReg,
     pub scopes: Scopes<String, Value>,
@@ -29,7 +29,7 @@ pub struct Runtime<'m> {
 }
 impl<'m> Runtime<'m> {
     pub fn new(
-        nodes: NodeReg,
+        nodes: &'m mut NodeReg,
         strint: StringInt,
         typereg: TypeReg,
         modules: &'m mut ModuleLoader,
@@ -45,6 +45,7 @@ impl<'m> Runtime<'m> {
             last_node_id: None,
         }
     }
+    
     pub fn init_types(&mut self) {
         let basic_types = vec![
             ("nil", Type::Nil),
@@ -154,7 +155,7 @@ impl<'m> Runtime<'m> {
                         }
                         Value::Module(path_id) => {
                             let path = self.strint.resolve(*path_id).unwrap().to_string();
-                            let module = self.modules.load(&path, &mut self.strint)?;
+                            let module = self.modules.load(&path, &mut self.strint, self.nodes)?;
                             if let Some(value) =
                                 module.exports.get(field_id)
                             {
@@ -169,7 +170,7 @@ impl<'m> Runtime<'m> {
                 }
                 Node::Import(path_id) => {
                     let path = self.strint.resolve(*path_id).unwrap().to_string();
-                    let module = self.modules.load(&path, &mut self.strint)?;
+                    let module = self.modules.load(&path, &mut self.strint, self.nodes)?;
                     for (export_name, export_value) in &module.exports {
                         self.scopes.insert(
                             self.strint.resolve(*export_name).unwrap().to_string(),

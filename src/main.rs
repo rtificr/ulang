@@ -29,9 +29,10 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let filename = args.get(1).map(|s| s.as_str()).unwrap_or("benchmark.u");
     let mut toplevel = ModuleLoader::new();
+    let mut global_nodes = NodeReg::new();
     let start = Instant::now();
     let mut strint = StringInt::new();
-    toplevel.load(filename, &mut strint).map_err(|e| {
+    toplevel.load(filename, &mut strint, &mut global_nodes).map_err(|e| {
         eprintln!("Couldn't load {}: {}", filename, e);
         e
     }).unwrap();
