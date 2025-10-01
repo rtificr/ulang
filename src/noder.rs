@@ -1,4 +1,4 @@
-use anyhow::bail;
+use anyhow::{anyhow, bail};
 use pest::{Parser, iterators::Pair};
 use slab::Slab;
 use string_interner::StringInterner;
@@ -70,6 +70,16 @@ impl Noder {
                     }
                 }
                 Some(self.insert_spanned_node(Node::Block { statements: ids }, span))
+            }
+            Rule::reference_expr => {
+                let node = self
+                    .handle_pair(
+                        pair.into_inner()
+                            .next()
+                            .ok_or(anyhow!("No body found for reference expression"))?,
+                    )?
+                    .ok_or(anyhow!("Couldn't handle pair in reference expression"))?;
+                Some(self.insert_spanned_node(Node::Reference(node), span))
             }
             Rule::program => {
                 let mut ids = Vec::new();
@@ -343,7 +353,7 @@ impl Noder {
                         Some(id) => id,
                         None => return Ok(None),
                     };
-                    let node = Node::Assign { name, value };
+                    let node = Node::Assign { name, node: value };
                     Some(self.insert_spanned_node(node, span))
                 } else {
                     // This is just a logical_or expression
@@ -751,7 +761,6 @@ impl Noder {
                 let node = Node::BinaryOp { left, op, right };
                 Some(self.insert_spanned_node(node, span))
             }
-
             Rule::import_expr => {
                 let mut inner = pair.into_inner().into_iter();
                 let Some(path) = self.handle_pair(inner.nth(1).unwrap())? else {
@@ -902,19 +911,13 @@ impl Noder {
                 let node = Node::Literal(Literal::Tuple { elements });
                 Some(self.insert_spanned_node(node, span))
             }
-            Rule::call_suffix | Rule::index_suffix | Rule::field_suffix => {
-                // These should not be called directly, they're handled within postfix
-                None
-            }
-            Rule::basic_type | Rule::array_type | Rule::tuple_type => {
-                // These are type rules, not expression rules - should not be executed
-                None
-            }
+            Rule::call_suffix | Rule::index_suffix | Rule::field_suffix => None,
+            Rule::basic_type | Rule::array_type | Rule::tuple_type => None,
         };
         Ok(r)
     }
     pub fn parse_type_ident(&mut self, str: &str) -> anyhow::Result<TypeIdent> {
-        let str = str.trim(); // Remove leading and trailing whitespace
+        let str = str.trim();
         let mut name = String::new();
         let mut dims = 0;
         let mut open_count = 0;
@@ -949,7 +952,6 @@ impl Noder {
         let mut current_text = String::new();
         let mut chars = content.chars().peekable();
 
-        // Helper function to add text part if not empty
         let add_text_part = |noder: &mut Self, text: &mut String, parts: &mut Vec<NodeId>| {
             if !text.is_empty() {
                 let unescaped = text.replace("{{", "{").replace("}}", "}");

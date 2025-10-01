@@ -153,16 +153,7 @@ impl Type {
         }
     }
 }
-pub fn derive_type(values: &[Value], typereg: &mut TypeReg, strint: &mut StringInt) -> TypeId {
-    let Some(init) = values.first() else {
-        return typereg.get_or_intern(&Type::TBD);
-    };
-    let mut init = init.get_type(strint, typereg);
-    for value in values.iter().skip(1) {
-        init = Type::merge(&init, &value.get_type(strint, typereg), typereg);
-    }
-    init
-}
+
 pub fn supports(a_id: &TypeId, b_id: &TypeId, typereg: &TypeReg) -> Option<bool> {
     if a_id == b_id {
         return Some(true);

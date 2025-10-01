@@ -1,2 +1,0 @@
-let mod = import "simple_module.u"
-let result = mod.simple_func(5)

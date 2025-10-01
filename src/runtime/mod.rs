@@ -1,29 +1,32 @@
+use anyhow::Result;
+use anyhow::*;
 use core::str;
-use std::{collections::HashMap, fs::File, io::Read};
-
-use anyhow::{anyhow, bail};
 use pest::Parser;
+use std::{collections::HashMap, fs::File, io::Read, ptr};
 
 use crate::{
     FRAMEBUF, NodeReg, Rule, SCREEN_HEIGHT, SCREEN_WIDTH, StringInt, TypeReg, UParser, WINDOW,
     ast::{Literal, Node, NodeId, StringId, TypeId, TypeIdent},
     runtime::{
-        types::{Type, derive_type, supports},
+        memory::{Memory, ValPtr},
+        types::{Type, supports},
         value::{BuiltinFn, Value},
     },
     scopes::Scopes,
 };
 
+pub mod helpers;
+pub mod memory;
+pub mod operation;
+pub mod transform;
 pub mod types;
 pub mod value;
-pub mod memory;
-pub mod helpers;
 
 pub struct Runtime {
     pub nodes: NodeReg,
     pub strint: StringInt,
     pub typereg: TypeReg,
-    pub scopes: Scopes<StringId, Value>,
+    pub memory: Memory,
     pub depth: usize,
     pub last_node_id: Option<NodeId>,
     pub source: String,
@@ -35,7 +38,7 @@ impl Runtime {
             strint,
             typereg,
             source: source.to_string(),
-            scopes: Scopes::new(),
+            memory: Memory::new(),
             depth: 0,
             last_node_id: None,
         }
@@ -54,8 +57,8 @@ impl Runtime {
         ];
         for (name, typ) in basic_types {
             let type_id = self.typereg.get_or_intern(&typ);
-            self.scopes
-                .insert_global(self.strint.get_or_intern(name), Value::Type(type_id));
+            self.memory
+                .alloc_global(self.strint.get_or_intern(name), Value::Type(type_id));
         }
     }
 
@@ -76,7 +79,7 @@ impl Runtime {
                 .ok_or(anyhow!("Failed to resolve types for supports"))?;
             Ok(Value::Boolean(result))
         };
-        self.scopes.insert_global(
+        self.memory.alloc_global(
             self.strint.get_or_intern("supports"),
             Value::Builtin(supports as BuiltinFn),
         );
@@ -85,25 +88,29 @@ impl Runtime {
             println!(
                 "{}",
                 args.iter()
-                    .map(|a| a.to_string(&runtime.strint, &runtime.typereg))
-                    .collect::<Vec<_>>()
+                    .map(|a| runtime.value_to_string(a))
+                    .collect::<Result<Vec<_>>>()?
                     .join(" ")
             );
             Ok(Value::Nil)
         }
-        self.scopes
-            .insert_global(self.strint.get_or_intern("print"), Value::Builtin(print));
+        self.memory.alloc_global(
+            self.strint.get_or_intern("print"),
+            Value::Builtin(print as BuiltinFn),
+        );
 
         fn typeof_(runtime: &mut Runtime, args: Vec<Value>) -> anyhow::Result<Value> {
             if args.len() != 1 {
                 bail!("typeof expects 1 argument, got {}", args.len());
             }
             let value = &args[0];
-            let type_id = value.get_type(&mut runtime.strint, &mut runtime.typereg);
+            let type_id = runtime.get_val_typeid(value.clone())?;
             Ok(Value::Type(type_id))
         }
-        self.scopes
-            .insert_global(self.strint.get_or_intern("typeof"), Value::Builtin(typeof_ as BuiltinFn));
+        self.memory.alloc_global(
+            self.strint.get_or_intern("typeof"),
+            Value::Builtin(typeof_ as BuiltinFn),
+        );
 
         fn sleep(runtime: &mut Runtime, args: Vec<Value>) -> anyhow::Result<Value> {
             if args.len() != 1 {
@@ -116,8 +123,10 @@ impl Runtime {
             std::thread::sleep(std::time::Duration::from_millis(*n as u64));
             Ok(Value::Nil)
         }
-        self.scopes
-            .insert_global(self.strint.get_or_intern("sleep"), Value::Builtin(sleep as BuiltinFn));
+        self.memory.alloc_global(
+            self.strint.get_or_intern("sleep"),
+            Value::Builtin(sleep as BuiltinFn),
+        );
 
         fn get_screen_width(runtime: &mut Runtime, args: Vec<Value>) -> anyhow::Result<Value> {
             if !args.is_empty() {
@@ -125,7 +134,7 @@ impl Runtime {
             }
             Ok(Value::Number(SCREEN_WIDTH as f64))
         }
-        self.scopes.insert_global(
+        self.memory.alloc_global(
             self.strint.get_or_intern("screenWidth"),
             Value::Builtin(get_screen_width as BuiltinFn),
         );
@@ -135,38 +144,38 @@ impl Runtime {
             }
             Ok(Value::Number(SCREEN_HEIGHT as f64))
         }
-        self.scopes.insert_global(
+        self.memory.alloc_global(
             self.strint.get_or_intern("screenHeight"),
             Value::Builtin(get_screen_height as BuiltinFn),
         );
         fn set_pixel(runtime: &mut Runtime, args: Vec<Value>) -> anyhow::Result<Value> {
             let xy = &args[0];
-            if !matches!(xy, Value::Tuple(elements) if elements.len() == 2 && matches!(elements[0], Value::Number(_)) && matches!(elements[1], Value::Number(_)))
-            {
-                bail!("set_pixel expects a tuple of two numbers as the first argument");
-            }
             let Value::Tuple(elements) = xy else {
                 bail!("set_pixel expects a tuple of two numbers as the first argument");
             };
+            let elements = elements
+                .iter()
+                .map(|e| runtime.memory.err_get(*e))
+                .collect::<Result<Vec<_>>>()?;
             let x = if let Value::Number(n) = elements[0] {
-                n as usize
+                *n as usize
             } else {
                 0
             };
             let y = if let Value::Number(n) = elements[1] {
-                n as usize
+                *n as usize
             } else {
                 0
             };
 
             let color = &args[1];
-            if !matches!(color, Value::Tuple(elements) if elements.len() == 3 && matches!(elements[0], Value::Number(_)) && matches!(elements[1], Value::Number(_)) && matches!(elements[2], Value::Number(_)))
-            {
-                bail!("set_pixel expects a tuple of three numbers as the second argument");
-            }
             let Value::Tuple(elements) = color else {
                 bail!("set_pixel expects a tuple of three numbers as the second argument");
             };
+            let elements = elements
+                .iter()
+                .map(|e| runtime.memory.err_get(*e))
+                .collect::<Result<Vec<_>>>()?;
             let r = if let Value::Number(n) = elements[0] {
                 (n * 255.0).clamp(0.0, 255.0) as u32
             } else {
@@ -192,7 +201,7 @@ impl Runtime {
 
             Ok(Value::Nil)
         }
-        self.scopes.insert_global(
+        self.memory.alloc_global(
             self.strint.get_or_intern("setPixel"),
             Value::Builtin(set_pixel as BuiltinFn),
         );
@@ -216,7 +225,7 @@ impl Runtime {
             }
             Ok(Value::Nil)
         }
-        self.scopes.insert_global(
+        self.memory.alloc_global(
             self.strint.get_or_intern("render"),
             Value::Builtin(render as BuiltinFn),
         );
@@ -242,74 +251,95 @@ impl Runtime {
                     field: field_id,
                 } => {
                     let object = self.eval(*object_id)?;
-                    let field = self.strint.resolve(*field_id).unwrap().to_string();
-                    let object = match &object.value {
+                    let object = match self.memory.err_get(object.val_ptr)? {
                         Value::Object(map) => {
                             if let Some(value) = map.get(field_id) {
-                                value.clone()
+                                value
                             } else {
+                                let field = self.strint.resolve(*field_id).unwrap().to_string();
                                 bail!("Field '{}' not found in object", field);
                             }
                         }
-                        Value::Module(path_id) => Value::Nil,
-                        _ => bail!("Cannot access field '{}' on non-object value", field),
+                        Value::Module(path_id) => &self.memory.malloc(Value::Nil),
+                        _ => {
+                            let field = self.strint.resolve(*field_id).unwrap().to_string();
+                            bail!("Cannot access field '{}' on non-object value", field);
+                        }
                     };
-                    Ok(object.into())
+                    Ok(Evaluation::new(*object))
+                }
+                Node::Reference(node) => {
+                    let referenced = self.eval(*node)?;
+                    Ok(self
+                        .memory
+                        .malloc(Value::Reference(referenced.val_ptr))
+                        .into())
                 }
                 Node::Import(path_id) => {
                     let path = self.strint.resolve(*path_id).unwrap().to_string();
 
-                    Ok(Value::Module(*path_id).into())
+                    Ok(self.memory.malloc(Value::Module(*path_id)).into())
                 }
-                Node::Literal(literal) => match literal {
-                    Literal::Number(n) => Ok(Value::Number(*n).into()),
-                    Literal::FString { parts } => {
-                        let parts = parts
-                            .iter()
-                            .map(|nid| {
-                                self.eval(*nid)
-                                    .map(|eval| eval.value.to_string(&self.strint, &self.typereg))
-                            })
-                            .collect::<anyhow::Result<Vec<_>>>()?
-                            .join("");
-                        Ok(Value::String(parts).into())
-                    }
-                    Literal::String(s) => {
-                        let s = self.strint.resolve(*s).unwrap();
-                        Ok(Value::String(s.to_string()).into())
-                    }
-                    Literal::Boolean(b) => Ok(Value::Boolean(*b).into()),
-                    Literal::Nil => Ok(Value::Nil.into()),
-                    Literal::Array { elements } => {
-                        let element_values = elements
-                            .iter()
-                            .map(|nid| self.eval(*nid).map(|eval| eval.value))
-                            .collect::<anyhow::Result<Vec<_>>>()?;
-                        Ok(Value::Array {
-                            of: derive_type(&element_values, &mut self.typereg, &mut self.strint),
-                            elements: element_values,
+                Node::Literal(literal) => {
+                    let val = match literal {
+                        Literal::Number(n) => Value::Number(*n),
+                        Literal::FString { parts } => {
+                            // Collect node IDs first to avoid borrowing self mutably and immutably
+                            let node_ids: Vec<NodeId> = parts.iter().copied().collect();
+                            let mut string_parts = Vec::with_capacity(node_ids.len());
+                            for nid in node_ids {
+                                let eval = self.eval(nid)?;
+                                let val = self.memory.err_get(eval.val_ptr)?;
+                                string_parts.push(self.value_to_string(val)?);
+                            }
+                            let parts = string_parts.join("");
+                            Value::String(parts).into()
                         }
-                        .into())
-                    }
-                    Literal::Tuple { elements } => {
-                        let element_values = elements
-                            .iter()
-                            .map(|nid| self.eval(*nid).map(|eval| eval.value))
-                            .collect::<anyhow::Result<Vec<_>>>()?;
-                        Ok(Value::Tuple(element_values).into())
-                    }
-                },
+                        Literal::String(s) => {
+                            let s = self.strint.resolve(*s).unwrap();
+                            Value::String(s.to_string())
+                        }
+                        Literal::Boolean(b) => Value::Boolean(*b),
+                        Literal::Nil => Value::Nil,
+                        Literal::Array { elements } => {
+                            let element_values = elements
+                                .iter()
+                                .map(|nid| self.eval(*nid).map(|eval| eval.val_ptr))
+                                .collect::<anyhow::Result<Vec<_>>>()?;
+                            Value::Array {
+                                of: self.derive_type(&element_values)?,
+                                elements: element_values,
+                            }
+                        }
+                        Literal::Tuple { elements } => {
+                            let element_values = elements
+                                .iter()
+                                .map(|nid| self.eval(*nid).map(|eval| eval.val_ptr))
+                                .collect::<anyhow::Result<Vec<_>>>()?;
+                            Value::Tuple(element_values)
+                        }
+                    };
+                    Ok(self.malloc_eval(val))
+                }
                 Node::Identifier(name_id) => {
                     let name: &str = self.strint.resolve(*name_id).unwrap();
-                    if let Some(value) = self.scopes.get(name_id) {
-                        Ok(value.clone().into())
+                    if let Some(value_id) = self.memory.search(*name_id) {
+                        if let Some(value) = self.memory.get(value_id) {
+                            Ok(Evaluation::new(value_id))
+                        } else {
+                            bail!("Value not found for identifier: '{}'", name);
+                        }
                     } else {
                         bail!("Undefined identifier: '{}'", name);
                     }
                 }
                 Node::TypeIdent(type_ident) => {
                     let base = self.strint.resolve(type_ident.base).unwrap();
-                    let Some(mut t) = self.scopes.get(&type_ident.base).cloned() else {
+                    let Some(Some(mut t)) = self
+                        .memory
+                        .search(type_ident.base)
+                        .map(|id| self.memory.get(id).cloned())
+                    else {
                         bail!("Undefined type identifier: '{}'", base);
                     };
                     for _ in 0..type_ident.dims {
@@ -321,31 +351,33 @@ impl Runtime {
                         let array_type_id = self.typereg.get_or_intern(&array_type);
                         t = Value::Type(array_type_id);
                     }
-                    Ok(t.into())
+                    Ok(self.malloc_eval(t))
                 }
                 Node::IfExpr {
                     condition,
                     then_branch,
                     else_branch,
                 } => {
-                    let cond_value = self.eval(*condition)?.value.is_truthy();
+                    let ptr = self.eval(*condition)?.val_ptr;
+                    let cond_value = self.memory.err_get(ptr)?.is_truthy();
                     if cond_value {
                         self.eval(*then_branch)
                     } else if let Some(else_branch) = else_branch {
                         self.eval(*else_branch)
                     } else {
-                        Ok(Value::Nil.into())
+                        Ok(self.memory.malloc(Value::Nil).into())
                     }
                 }
                 Node::WhileExpr { condition, body } => {
-                    let mut val = Value::Nil;
-                    while self.eval(*condition)?.value.is_truthy() {
+                    let mut val = self.memory.malloc(Value::Nil);
+                    let ptr = self.eval(*condition)?.val_ptr;
+                    while self.memory.err_get(ptr)?.is_truthy() {
                         let eval = self.eval(*body)?;
                         match eval.reason {
                             EvalReason::Return => return Ok(eval),
                             EvalReason::Break => break,
                             EvalReason::Neither => {
-                                val = eval.value;
+                                val = eval.val_ptr;
                             }
                         }
                     }
@@ -364,22 +396,25 @@ impl Runtime {
                     export,
                 } => {
                     let name = self.strint.resolve(*name_id).unwrap().to_string();
-                    let val = if let Some(value) = value {
-                        self.eval(*value)?.value
+                    let val_ptr = if let Some(value) = value {
+                        self.eval(*value)?.val_ptr
                     } else {
-                        Value::Nil
+                        self.memory.malloc(Value::Nil)
                     };
+
+                    let val = self.memory.err_get(val_ptr)?.clone();
+
                     if let Some(type_node_id) = ann {
-                        let ty = self
-                            .eval(*type_node_id)?
-                            .value
-                            .typify(&mut self.strint, &mut self.typereg)?;
+                        let ty = {
+                            let val = self.eval(*type_node_id)?.val_ptr;
+                            let val = self.memory.err_get(val)?.clone();
+                            self.interpret_as_type_literal(&val)?
+                        };
                         let expected_type_id = &self.typereg.get_or_intern(&Type::Type);
                         self.type_assert(&ty, expected_type_id)?;
-
-                        if val.get_type(&mut self.strint, &mut self.typereg) != *expected_type_id {
+                        if self.get_val_typeid(val.clone())? != *expected_type_id {
                             let found_type = {
-                                let id = val.get_type(&mut self.strint, &mut self.typereg);
+                                let id = self.get_val_typeid(val)?;
                                 self.typereg.resolve(id)
                             };
                             let expected_type = self.typereg.resolve(*expected_type_id);
@@ -392,39 +427,22 @@ impl Runtime {
                         }
                     }
 
-                    // Check if this declaration represents a type alias
-                    // Only convert tuple/array values to type aliases, not functions or other values
-                    let stored_value = match &val {
-                        Value::Tuple(_) | Value::Array { .. } | Value::Type(_) => {
-                            if let Ok(type_id) = val.typify(&mut self.strint, &mut self.typereg) {
-                                Value::Type(type_id)
-                            } else {
-                                val.clone()
-                            }
-                        }
-                        _ => val.clone(),
-                    };
-
-                    match export {
-                        true => {
-                            println!("exporting, doing nothing ");
-                            self.scopes.insert(*name_id, stored_value);
-                        }
-                        false => {
-                            self.scopes.insert(*name_id, stored_value);
-                        }
-                    };
-                    Ok(Value::Type(val.get_type(&mut self.strint, &mut self.typereg)).into())
+                    println!("linking name {name} to value {:?}", val);
+                    let type_id = self.get_val_typeid(val)?;
+                    if *export {
+                        println!("exporting, doing nothing ");
+                    }
+                    self.memory.attrib(*name_id, val_ptr);
+                    Ok(self.malloc_eval(Value::Type(type_id)))
                 }
-                Node::Assign { name: name_id, value } => {
-                    let name = self.strint.resolve(*name_id).unwrap().to_string();
-                    let val = self.eval(*value)?;
-                    let entry = self
-                        .scopes
-                        .get_mut(name_id)
-                        .ok_or(anyhow!("Undefined identifier: {}", name))?;
-                    *entry = val.value.clone();
-                    Ok(val.into())
+                Node::Assign {
+                    name: name_id,
+                    node,
+                } => {
+                    let eval = self.eval(*node)?;
+
+                    self.memory.attrib(*name_id, eval.val_ptr);
+                    Ok(eval.into())
                 }
                 Node::Function { params, body } => {
                     let (resolved_params, unresolved_params): (Vec<_>, Vec<_>) = params
@@ -444,23 +462,28 @@ impl Runtime {
                                 .collect::<Vec<_>>()
                         );
                     }
-                    Ok(Value::Function {
-                        params: resolved_params,
-                        body: body.clone(),
-                        return_type: self.typereg.get_or_intern(&Type::Any),
-                    }
-                    .into())
+                    Ok(self
+                        .memory
+                        .malloc(Value::Function {
+                            params: resolved_params,
+                            body: body.clone(),
+                            return_type: self.typereg.get_or_intern(&Type::Any),
+                        })
+                        .into())
                 }
                 Node::FunctionCall { node, args } => {
-                    let func = self.eval(*node)?.value;
+                    let ptr = self.eval(*node)?.val_ptr;
+                    let func = self.memory.err_get(ptr)?.clone();
 
                     if let Value::Builtin(builtin) = func {
-                        let arg_values: anyhow::Result<Vec<Value>> = args
+                        let arg_values: Vec<Value> = args
                             .iter()
-                            .map(|&arg| self.eval(arg).map(|e| e.value))
-                            .collect();
-                        let arg_values = arg_values?;
-                        return builtin(self, arg_values).map(|v| v.into());
+                            .map(|&arg| -> anyhow::Result<Value> {
+                                let eval = self.eval(arg)?;
+                                Ok(self.memory.err_get(eval.val_ptr)?.clone())
+                            })
+                            .collect::<anyhow::Result<Vec<_>>>()?;
+                        return builtin(self, arg_values).map(|v| v.to_eval(self));
                     }
 
                     let name = {
@@ -492,9 +515,10 @@ impl Runtime {
                         for (i, ((stringid, param_type_id), arg_value)) in
                             params.iter().zip(arg_values.iter()).enumerate()
                         {
-                            let arg_type_id = arg_value
-                                .value
-                                .get_type(&mut self.strint, &mut self.typereg);
+                            let arg_type_id = self
+                                .get_val_typeid(self.memory.err_get(arg_value.val_ptr)?.clone())?;
+                            let type_id = self
+                                .get_val_typeid(self.memory.err_get(arg_value.val_ptr)?.clone())?;
 
                             if !supports(param_type_id, &arg_type_id, &self.typereg).unwrap_or(true)
                             {
@@ -513,13 +537,13 @@ impl Runtime {
                                 );
                             }
                         }
-                        self.scopes.push();
+                        self.memory.push_scope();
                         for (i, arg_value) in arg_values.into_iter().enumerate() {
-                            let stringid = params[i].0;
-                            self.scopes.insert(stringid, arg_value.into());
+                            let name_id = params[i].0;
+                            self.memory.attrib(name_id, arg_value.val_ptr);
                         }
                         let result = self.eval(body);
-                        self.scopes.pop();
+                        self.memory.pop_scope();
                         result
                     } else {
                         bail!("{} is not a function", name)
@@ -527,31 +551,29 @@ impl Runtime {
                 }
                 Node::UnaryOp { op, expr } => {
                     let expr_value = self.eval(*expr)?;
-                    let result = expr_value
-                        .value
-                        .unary_operate(&op)
+                    let result = self
+                        .unary_operate(self.memory.err_get(expr_value.val_ptr)?, op)
                         .map_err(|e| anyhow!(e))?;
                     Ok(Evaluation {
-                        value: result,
+                        val_ptr: self.memory.malloc(result),
                         reason: expr_value.reason,
                     })
                 }
                 Node::BinaryOp { left, op, right } => {
                     let left_value = self.eval(*left)?;
                     let right_value = self.eval(*right)?;
-                    let result = left_value
-                        .value
-                        .operate(&right_value.value, &op, &mut self.strint, &mut self.typereg)
-                        .map_err(|e| anyhow!(e))?;
+                    let val_a = self.memory.err_get(left_value.val_ptr)?.clone();
+                    let val_b = self.memory.err_get(right_value.val_ptr)?.clone();
+                    let result = self.operate(&val_a, &val_b, &op).map_err(|e| anyhow!(e))?;
                     Ok(Evaluation {
-                        value: result,
+                        val_ptr: self.memory.malloc(result),
                         reason: EvalReason::Neither,
                     })
                 }
                 Node::Block { statements } => {
-                    self.scopes.push();
+                    self.memory.push_scope();
                     let mut last_eval = Evaluation {
-                        value: Value::Nil,
+                        val_ptr: self.memory.malloc(Value::Nil),
                         reason: EvalReason::Neither,
                     };
                     for stmt in statements {
@@ -561,17 +583,19 @@ impl Runtime {
                             break;
                         }
                     }
-                    self.scopes.pop();
+                    self.memory.pop_scope();
                     Ok(last_eval)
                 }
                 Node::IndexAccess { base: array, index } => {
-                    let array_value = self.eval(*array)?;
-                    let index_value = self.eval(*index)?;
-                    let Value::Number(n) = index_value.value else {
+                    let array_ptr = self.eval(*array)?.val_ptr;
+                    let index_ptr = self.eval(*index)?.val_ptr;
+                    let array_value = self.memory.err_get(array_ptr)?;
+                    let index_value = self.memory.err_get(index_ptr)?;
+                    let Value::Number(n) = index_value else {
                         bail!("Index must be a number");
                     };
-                    let index = n as usize;
-                    match &array_value.value {
+                    let index = *n as usize;
+                    match &array_value {
                         Value::Array { of: _, elements } => {
                             if index >= elements.len() {
                                 bail!("Index out of bounds");
@@ -589,16 +613,16 @@ impl Runtime {
                 }
                 Node::Return(value) => {
                     let value = match value {
-                        Some(expr) => self.eval(*expr)?.value,
-                        None => Value::Nil,
+                        Some(expr) => self.eval(*expr)?.val_ptr,
+                        None => self.memory.malloc(Value::Nil),
                     };
                     Ok(Evaluation {
-                        value,
+                        val_ptr: value,
                         reason: EvalReason::Return,
                     })
                 }
                 Node::Break(_) => Ok(Evaluation {
-                    value: Value::Nil,
+                    val_ptr: self.memory.malloc(Value::Nil),
                     reason: EvalReason::Break,
                 }),
             },
@@ -609,16 +633,16 @@ impl Runtime {
     }
     pub fn resolve_type_ident(&mut self, type_ident: &TypeIdent) -> anyhow::Result<TypeId> {
         let base = self.strint.resolve(type_ident.base).unwrap();
-        let Some(mut t) = self.scopes.get(&type_ident.base).cloned() else {
+        let Some(mut t) = self.memory.search_val(type_ident.base).cloned() else {
             bail!("Undefined type identifier: {}", base);
         };
         for _ in 0..type_ident.dims {
-            let type_id = t.typify(&mut self.strint, &mut self.typereg)?;
+            let type_id = self.interpret_as_type_literal(&t)?;
             let array_type = types::Type::Array(type_id);
             let array_type_id = self.typereg.get_or_intern(&array_type);
             t = Value::Type(array_type_id);
         }
-        let type_id = t.typify(&mut self.strint, &mut self.typereg)?;
+        let type_id = self.interpret_as_type_literal(&t)?;
         Ok(type_id)
     }
     pub fn type_assert(&mut self, found: &TypeId, expected: &TypeId) -> anyhow::Result<()> {
@@ -638,31 +662,34 @@ impl Runtime {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Evaluation {
-    pub value: Value,
+    pub val_ptr: ValPtr,
     pub reason: EvalReason,
 }
 impl Evaluation {
-    pub fn map<F>(self, f: F) -> Self
-    where
-        F: FnOnce(Value) -> Value,
-    {
+    pub fn new(ptr: ValPtr) -> Self {
         Self {
-            value: f(self.value),
-            reason: self.reason,
+            val_ptr: ptr,
+            reason: EvalReason::Neither,
         }
     }
+    pub fn is_return(&self) -> bool {
+        matches!(self.reason, EvalReason::Return)
+    }
+    pub fn is_break(&self) -> bool {
+        matches!(self.reason, EvalReason::Break)
+    }
 }
-pub trait DoubleMap {
-    fn map<F>(self, f: F) -> Self
-    where
-        F: FnOnce(Value) -> Value;
+impl Into<ValPtr> for Evaluation {
+    fn into(self) -> ValPtr {
+        self.val_ptr
+    }
 }
-impl DoubleMap for anyhow::Result<Evaluation, String> {
-    fn map<F>(self, f: F) -> Self
-    where
-        F: FnOnce(Value) -> Value,
-    {
-        self.map(|eval| eval.map(f))
+impl Into<Evaluation> for ValPtr {
+    fn into(self) -> Evaluation {
+        Evaluation {
+            val_ptr: self,
+            reason: EvalReason::Neither,
+        }
     }
 }
 #[derive(Debug, Clone, PartialEq)]
@@ -670,17 +697,4 @@ pub enum EvalReason {
     Return,
     Break,
     Neither,
-}
-impl Into<Value> for Evaluation {
-    fn into(self) -> Value {
-        self.value
-    }
-}
-impl Into<Evaluation> for Value {
-    fn into(self) -> Evaluation {
-        Evaluation {
-            value: self,
-            reason: EvalReason::Neither,
-        }
-    }
 }

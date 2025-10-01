@@ -21,6 +21,11 @@ pub fn print_expr(nodes: &NodeReg, strint: &StringInt, depth: usize, node_id: No
                     println!("{}Export", tabs);
                     print_expr(nodes, strint, depth + 1, *expr);
                 }
+                Node::Reference(node_id) => {
+                    println!("&(");
+                    print_expr(nodes, strint, depth + 1, *node_id);
+                    println!(")");
+                }
                 Node::Declaration { name, value, ann, export } => {
                     match ann {
                         Some(ann) => {
@@ -113,7 +118,7 @@ pub fn print_expr(nodes: &NodeReg, strint: &StringInt, depth: usize, node_id: No
                     update,
                     body,
                 } => {}
-                Node::Assign { name, value } => {
+                Node::Assign { name, node: value } => {
                     let name = strint.resolve(*name).unwrap_or("unknown");
                     println!("{}\"{}\" = :", tabs, name);
                     print_expr(nodes, strint, depth + 1, *value);

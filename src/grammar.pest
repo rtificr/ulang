@@ -15,9 +15,11 @@ expr = {
   | assignment
   | logical_or
   | literal
+  | reference_expr
   | block_expr
 }
 
+reference_expr = { "&" ~ expr }
 let_expr      = { let ~ identifier ~ "=" ~ expr }
 export_let_expr = { "export" ~ let ~ identifier ~ "=" ~ expr }
 let_annotated = { let ~ identifier ~ type_annotation ~ "=" ~ expr }

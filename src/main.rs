@@ -88,11 +88,12 @@ fn main() {
     runtime.init_ministd();
     runtime.init_types();
     match runtime.eval(root) {
-        Ok(val) => {
+        Ok(evaluation) => {
+            let value_str = runtime.value_to_string(runtime.memory.err_get(evaluation.val_ptr).unwrap()).unwrap();
             let (nodereg, strint, typereg) = runtime.finish();
             let runtime_duration = runtime_start.elapsed();
             println!("Runtime in {:?}", runtime_duration);
-            println!("Result: {}", val.value.to_string(&strint, &typereg));
+            println!("Result: {}", value_str);
         }
         Err(e) => {
             eprintln!("Runtime error: {}", e);
