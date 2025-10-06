@@ -4,12 +4,12 @@ use crate::{
 
 pub fn print_expr(nodes: &NodeReg, strint: &StringInt, depth: usize, node_id: NodeId) {
     let tab = "  ";
-    match nodes.get(node_id) {
+    match nodes.get(node_id.raw()) {
         Some(node) => {
             let tabs = tab.repeat(depth);
             match &node.node {
                 Node::FieldAccess { object, field } => {
-                    let field = strint.resolve(*field).unwrap();
+                    let field = strint.resolve(field.raw()).unwrap();
                     println!("{}FieldAccess .{}", tabs, field);
                     print_expr(nodes, strint, depth + 1, *object);
                 }
@@ -29,16 +29,16 @@ pub fn print_expr(nodes: &NodeReg, strint: &StringInt, depth: usize, node_id: No
                 Node::Declaration { name, value, ann, export } => {
                     match ann {
                         Some(ann) => {
-                            let ann = strint.resolve(*ann).unwrap_or("unknown");
+                            let ann = strint.resolve(ann.raw()).unwrap_or("unknown");
                             println!(
                                 "{}{}let {}: {} = ",
                                 if *export { "export " } else { "" },
                                 tabs,
-                                strint.resolve(*name).unwrap(),
+                                strint.resolve(name.raw()).unwrap(),
                                 ann
                             );
                         }
-                        None => println!("{}let {} = ", tabs, strint.resolve(*name).unwrap()),
+                        None => println!("{}let {} = ", tabs, strint.resolve(name.raw()).unwrap()),
                     }
                     if let Some(value) = value {
                         print_expr(nodes, strint, depth + 1, *value);
@@ -69,7 +69,7 @@ pub fn print_expr(nodes: &NodeReg, strint: &StringInt, depth: usize, node_id: No
                         println!("{}Number({})", tabs, n);
                     }
                     Literal::String(s) => {
-                        let s = strint.resolve(*s).unwrap();
+                        let s = strint.resolve(s.raw()).unwrap();
                         println!("{}String(\"{}\")", tabs, s);
                     }
                     Literal::FString {
@@ -100,17 +100,8 @@ pub fn print_expr(nodes: &NodeReg, strint: &StringInt, depth: usize, node_id: No
                     }
                 },
                 Node::Identifier(name) => {
-                    let name = strint.resolve(*name).unwrap();
+                    let name = strint.resolve(name.raw()).unwrap();
                     println!("{}Identifier(\"{}\")", tabs, name);
-                }
-                Node::TypeIdent(type_ident) => {
-                    let base = strint.resolve(type_ident.base).unwrap();
-                    println!(
-                        "{}TypeIdent({}{})",
-                        tabs,
-                        base,
-                        "[]".repeat(type_ident.dims as usize)
-                    );
                 }
                 Node::ForExpr {
                     init,
@@ -119,24 +110,17 @@ pub fn print_expr(nodes: &NodeReg, strint: &StringInt, depth: usize, node_id: No
                     body,
                 } => {}
                 Node::Assign { name, node: value } => {
-                    let name = strint.resolve(*name).unwrap_or("unknown");
+                    let name = strint.resolve(name.raw()).unwrap_or("unknown");
                     println!("{}\"{}\" = :", tabs, name);
                     print_expr(nodes, strint, depth + 1, *value);
                 }
                 Node::Function { params, body } => {
-                    let param_strs: Vec<String> = params
-                        .iter()
-                        .map(|p| {
-                            let name = strint.resolve(p.name).unwrap();
-                            let type_name = if let Some(type_) = strint.resolve(p.type_.base) {
-                                format!("{:?}", type_)
-                            } else {
-                                "unknown".to_string()
-                            };
-                            format!("{}: {}", name, type_name)
-                        })
-                        .collect();
-                    println!("{}Function({}) {{", tabs, param_strs.join(", "));
+                    println!("{}Function(", tabs);
+                    for param in params {
+                        let node = param.type_;
+                        print_expr(nodes, strint, depth + 1, node);
+                    }
+                    println!(") {{");
                     print_expr(nodes, strint, depth + 1, *body);
                     println!("{}}}", tabs);
                 }
@@ -188,7 +172,7 @@ pub fn print_expr(nodes: &NodeReg, strint: &StringInt, depth: usize, node_id: No
             }
         }
         None => {
-            println!("Node ID {} not found.", node_id);
+            println!("Node ID {} not found.", node_id.raw());
         }
     }
 }

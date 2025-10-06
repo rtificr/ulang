@@ -1,12 +1,49 @@
 use std::{collections::HashMap, fmt::Display};
 
 use interns::Symbol;
-use slab::Slab;
-use string_interner::{StringInterner, backend::BucketBackend};
+// slab and string-interner imports removed; AST uses the raw alias types via macro
 
-pub type NodeId = usize;
-pub type TypeId = Symbol<usize>;
-pub type StringId = usize;
+/// Small helper macro to implement conversions and formatting for simple newtypes
+macro_rules! impl_id {
+    // Optionally allow a third identifier which will become a raw type alias
+    ($name:ident, $raw:ty $(, $raw_alias:ident)?) => {
+        #[derive(Copy, Clone, PartialEq, Eq, Hash)]
+        pub struct $name(pub $raw);
+
+        impl $name {
+            /// Construct the newtype from the raw underlying value.
+            #[inline]
+            pub fn from_raw(k: $raw) -> Self {
+                $name(k)
+            }
+            /// Return the underlying raw representation for interop with
+            /// external crates (e.g. slab, slotmap, interners) that expect
+            /// the primitive symbol/index type.
+            #[inline]
+            pub fn raw(self) -> $raw {
+                self.0
+            }
+        }
+        impl std::fmt::Debug for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "{}({:?})", stringify!($name), self.0)
+            }
+        }
+        impl std::fmt::Display for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "{:?}", self.0)
+            }
+        }
+        $(
+            /// Raw type alias for the underlying primitive used by `$name`.
+            pub type $raw_alias = $raw;
+        )?
+    };
+}
+
+impl_id!(NodeId, usize, NodeIdRaw);
+impl_id!(StringId, usize, StringIdRaw);
+impl_id!(TypeId, Symbol<usize>, TypeIdRaw);
 
 /// Represents a character span in the source code
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -61,7 +98,6 @@ pub enum Node {
     Export(NodeId),
     Literal(Literal),
     Identifier(StringId),
-    TypeIdent(TypeIdent),
     FieldAccess { object: NodeId, field: StringId },
     IfExpr {
         condition: NodeId,
@@ -95,7 +131,7 @@ impl Node {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FuncParam {
     pub name: StringId,
-    pub type_: TypeIdent,
+    pub type_: NodeId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

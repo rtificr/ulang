@@ -4,9 +4,7 @@ use slab::Slab;
 use string_interner::StringInterner;
 
 use crate::{
-    NodeReg, Rule, StringInt, TypeReg, UParser,
-    ast::{FuncParam, Literal, Node, NodeId, Operator, Span, SpannedNode, TypeIdent},
-    err::ParseError,
+    ast::{FuncParam, Literal, Node, NodeId, Operator, Span, SpannedNode, StringId, TypeIdent}, err::ParseError, NodeReg, Rule, StringInt, TypeReg, UParser
 };
 
 pub struct Noder {
@@ -38,7 +36,7 @@ impl Noder {
     /// Helper method to create a spanned node from a Pest pair
     fn insert_spanned_node(&mut self, node: Node, span: Span) -> NodeId {
         let spanned_node = SpannedNode::new(node, span);
-        self.nodes.insert(spanned_node)
+        NodeId(self.nodes.insert(spanned_node))
     }
 
     pub fn handle_pair(&mut self, pair: Pair<Rule>) -> anyhow::Result<Option<NodeId>> {
@@ -50,7 +48,7 @@ impl Noder {
                 let name = inner_rules.nth(1).unwrap().as_str();
                 let value = self.handle_pair(inner_rules.next().unwrap())?;
                 let node = Node::Declaration {
-                    name: self.strint.get_or_intern(name),
+                    name: StringId(self.strint.get_or_intern(name)),
                     ann: None,
                     value,
                     export: is_export,
@@ -102,7 +100,7 @@ impl Noder {
                 let ann = Some(self.require_node(ann)?);
                 let value = self.handle_pair(inner_rules.next().unwrap())?;
                 let node = Node::Declaration {
-                    name: self.strint.get_or_intern(name),
+                    name: crate::ast::StringId::from_raw(self.strint.get_or_intern(name)),
                     ann,
                     value,
                     export: is_export,
@@ -209,10 +207,8 @@ impl Noder {
                     for param_pair in current_pair.into_inner() {
                         let mut param_inner = param_pair.into_inner();
                         let name = param_inner.next().unwrap().as_str();
-                        let type_ident = if let Some(type_ann_pair) = param_inner.next() {
-                            self.parse_type_ident(
-                                type_ann_pair.into_inner().next().unwrap().as_str(),
-                            )?
+                        let type_node = if let Some(type_ann_pair) = param_inner.next() {
+                            self.handle_pair(type_ann_pair)?.ok_or(anyhow!("No type annotation for function declaration"))?
                         } else {
                             return Err(ParseError::MissingTypeAnnotation {
                                 ident: name.to_string(),
@@ -220,8 +216,8 @@ impl Noder {
                             .into());
                         };
                         params_vec.push(FuncParam {
-                            name: self.strint.get_or_intern(name),
-                            type_: type_ident,
+                            name: crate::ast::StringId::from_raw(self.strint.get_or_intern(name)),
+                            type_: type_node,
                         });
                     }
                     // The next item should be the body expression - skip any intermediate tokens
@@ -284,7 +280,7 @@ impl Noder {
                             let field_name = suffix_pair.into_inner().next().unwrap();
                             let node = Node::FieldAccess {
                                 object: base_expr,
-                                field: self.strint.get_or_intern(field_name.as_str()),
+                                field: crate::ast::StringId::from_raw(self.strint.get_or_intern(field_name.as_str())),
                             };
                             self.insert_spanned_node(node, span)
                         }
@@ -344,7 +340,7 @@ impl Noder {
                 if inner_rules.peek().is_some() {
                     // This is an assignment: identifier = expr
                     let name = match self.handle_pair(first)? {
-                        Some(nodeid) => self.nodes[nodeid]
+                        Some(nodeid) => self.nodes[nodeid.raw()]
                             .as_identifier()
                             .ok_or(ParseError::InvalidAssignmentTarget)?,
                         None => return Ok(None),
@@ -676,7 +672,7 @@ impl Noder {
             }
             Rule::identifier => {
                 let name = pair.as_str();
-                let node = Node::Identifier(self.strint.get_or_intern(name));
+                let node = Node::Identifier(crate::ast::StringId::from_raw(self.strint.get_or_intern(name)));
                 Some(self.insert_spanned_node(node, span))
             }
             Rule::r#let => {
@@ -840,18 +836,12 @@ impl Noder {
             Rule::string => {
                 let s = pair.as_str();
                 let unescaped = &s[1..s.len() - 1];
-                let node = Node::Literal(Literal::String(self.strint.get_or_intern(unescaped)));
+                let node = Node::Literal(Literal::String(StringId(self.strint.get_or_intern(unescaped))));
                 Some(self.insert_spanned_node(node, span))
             }
             Rule::WHITESPACE => todo!(),
             Rule::SPACES => todo!(),
             Rule::COMMENT => todo!(),
-            Rule::type_ident => {
-                let type_str = pair.as_str();
-                let type_ident = self.parse_type_ident(type_str)?;
-                let node = Node::TypeIdent(type_ident);
-                Some(self.insert_spanned_node(node, span))
-            }
             Rule::r#break => todo!(),
             Rule::import => {
                 panic!("Encountered raw 'import' token - this should be handled by import_expr");
@@ -912,7 +902,6 @@ impl Noder {
                 Some(self.insert_spanned_node(node, span))
             }
             Rule::call_suffix | Rule::index_suffix | Rule::field_suffix => None,
-            Rule::basic_type | Rule::array_type | Rule::tuple_type => None,
         };
         Ok(r)
     }
@@ -943,7 +932,7 @@ impl Noder {
         }
 
         Ok(TypeIdent {
-            base: self.strint.get_or_intern(&name),
+            base: crate::ast::StringId::from_raw(self.strint.get_or_intern(&name)),
             dims,
         })
     }
@@ -955,7 +944,7 @@ impl Noder {
         let add_text_part = |noder: &mut Self, text: &mut String, parts: &mut Vec<NodeId>| {
             if !text.is_empty() {
                 let unescaped = text.replace("{{", "{").replace("}}", "}");
-                let string_id = noder.strint.get_or_intern(&unescaped);
+                let string_id = crate::ast::StringId::from_raw(noder.strint.get_or_intern(&unescaped));
                 let node = Node::Literal(Literal::String(string_id));
                 let span = Span {
                     start: 0,

@@ -11,7 +11,7 @@ use string_interner::{
     backend::{Backend, BucketBackend, BufferBackend},
 };
 
-use crate::{ast::{FuncParam, Literal, Node, NodeId, Operator, Span, SpannedNode, StringId, TypeId, TypeIdent}, err::ParseError, noder::Noder, printexpr::print_expr, runtime::{types::Type, Runtime}};
+use crate::{ast::{FuncParam, Literal, Node, NodeId, Operator, Span, SpannedNode, StringId, TypeId, TypeIdent, StringIdRaw, TypeIdRaw, NodeIdRaw}, err::ParseError, noder::Noder, printexpr::print_expr, runtime::{types::Type, Runtime}};
 
 mod ast;
 mod noder;
@@ -20,6 +20,7 @@ mod scopes;
 mod runtime;
 mod err;
 mod module;
+mod util;
 
 #[derive(pest_derive::Parser)]
 #[grammar = "grammar.pest"]
@@ -107,4 +108,4 @@ fn main() {
 pub type NodeReg = Slab<SpannedNode>;
 pub type TypeReg = Interner<Type>;
 pub type TypeIdentMap = HashMap<TypeIdent, TypeId>;
-pub type StringInt = StringInterner<BucketBackend<StringId>>;
+pub type StringInt = StringInterner<BucketBackend<usize>>;

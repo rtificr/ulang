@@ -54,11 +54,7 @@ field_suffix    =  { "." ~ identifier }
 primary         =  { literal | identifier | "(" ~ expr ~ ")" }
 negate          =  { "-" ~ expr }
 not             =  { "!" ~ expr }
-type_annotation =  { ":" ~ type_ident ~ SPACES }
-type_ident      =  { tuple_type | array_type | basic_type }
-basic_type      =  { identifier }
-array_type      =  { "[" ~ type_ident ~ "]" }
-tuple_type      =  { "()" | "(" ~ type_ident ~ ("," ~ type_ident)+ ~ ")" }
+type_annotation =  { ":" ~ expr }
 
 // Keywords - defined with word boundaries
 let      = @{ "let" ~ !ASCII_ALPHANUMERIC }

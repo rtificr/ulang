@@ -1,5 +1,5 @@
 use crate::{
-    ast::{NodeId, Operator, StringId, TypeId, TypeIdent}, runtime::{memory::ValPtr, types::Type, EvalReason, Evaluation, Runtime}, StringInt, TypeReg
+    ast::{NodeId, Operator, StringId, TypeId, TypeIdent}, runtime::{memory::ValPtr, types::Type, EvalReason, Evaluation, Runtime, AccessMode}, StringInt, TypeReg
 };
 use anyhow::{bail, Result};
 use std::{collections::HashMap, fmt::Display};
@@ -37,9 +37,6 @@ impl Value {
         }
     }
     pub fn to_eval(self, runtime: &mut Runtime) -> Evaluation {
-        Evaluation {
-            val_ptr: runtime.malloc(self),
-            reason: EvalReason::Neither,
-        }
+        Evaluation::new(runtime.malloc(self))
     }
 }

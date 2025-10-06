@@ -8,10 +8,10 @@ use std::vec;
 impl Runtime {
     pub fn get_val_typeid(&mut self, value: Value) -> Result<TypeId> {
         let ty = self.get_val_type(value)?;
-        Ok(self.typereg.get_or_intern(&ty))
+        Ok(TypeId::from_raw(self.typereg.get_or_intern(&ty)))
     }
     pub fn get_val_type(&mut self, value: Value) -> Result<Type> {
-        Ok(match value {
+    Ok(match value {
             Value::Nil => Type::Nil,
             Value::Number(_) => Type::Number,
             Value::String(_) => Type::String,
@@ -23,10 +23,10 @@ impl Runtime {
                     .collect::<Result<Vec<_>>>()?,
             ),
             Value::Array { of, .. } => Type::Array(of),
-            Value::Object(map) => Type::Object(
+                Value::Object(map) => Type::Object(
                 map.iter()
                     .map(|(k, v)| {
-                        self.get_val_typeid(self.memory.err_get(*v)?.clone())
+                            self.get_val_typeid(self.memory.err_get(*v)?.clone())
                             .map(|typeid| (*k, typeid))
                     })
                     .collect::<Result<Vec<_>>>()?,
@@ -86,7 +86,7 @@ impl Runtime {
                     .map(|(k, v)| {
                         Ok(format!(
                             "{}: {}",
-                            self.strint.resolve(*k).unwrap(),
+                            self.strint.resolve(k.raw()).unwrap(),
                             self.value_to_string(self.memory.err_get(*v)?)?
                         ))
                     })
@@ -103,12 +103,12 @@ impl Runtime {
                     .iter()
                     .map(|(name, ty)| format!(
                         "{}: {:?}",
-                        self.strint.resolve(*name).unwrap(),
-                        self.typereg.resolve(*ty).unwrap_or(&Type::Any)
+                        self.strint.resolve(name.raw()).unwrap(),
+                        self.typereg.resolve(ty.raw()).unwrap_or(&Type::Any)
                     ))
                     .collect::<Vec<_>>()
                     .join(", "),
-                self.typereg.resolve(*return_type).unwrap_or(&Type::Any)
+                self.typereg.resolve(return_type.raw()).unwrap_or(&Type::Any)
             ),
             Value::Builtin(f) => format!("<builtin fn {:?}>", f),
             Value::Module(path_id) => {
@@ -124,7 +124,7 @@ impl Runtime {
 
     pub fn derive_type(&mut self, values: &[ValPtr]) -> Result<TypeId> {
         let Some(init) = values.first() else {
-            return Ok(self.typereg.get_or_intern(&Type::TBD));
+            return Ok(TypeId::from_raw(self.typereg.get_or_intern(&Type::TBD)));
         };
         let ival = self.memory.err_get(*init)?.clone();
         let mut init = self.get_val_typeid(ival)?;
@@ -140,8 +140,8 @@ impl Runtime {
         if a_id == b_id {
             return *a_id;
         }
-        let a = self.typereg.resolve(*a_id).unwrap_or(&Type::Any).clone();
-        let b = self.typereg.resolve(*b_id).unwrap_or(&Type::Any).clone();
+    let a = self.typereg.resolve(a_id.raw()).unwrap_or(&Type::Any).clone();
+    let b = self.typereg.resolve(b_id.raw()).unwrap_or(&Type::Any).clone();
         match (a, b) {
             (Type::Any, _) => *a_id,
             (_, Type::Any) => *b_id,
@@ -158,7 +158,7 @@ impl Runtime {
                 }
                 self.alloc_type(&Type::Union(types))
             }
-            (_, _) => self.typereg.get_or_intern(&Type::Union(vec![*a_id, *b_id])),
+            (_, _) => TypeId::from_raw(self.typereg.get_or_intern(&Type::Union(vec![*a_id, *b_id]))),
         }
     }
 
@@ -169,9 +169,13 @@ impl Runtime {
             Value::Tuple(elements) => {
                 let types = elements
                     .iter()
-                    .map(|v| self.get_val_typeid(self.memory.err_get(*v)?.clone()))
+                    .map(|v| self.interpret_as_type_literal(&self.memory.err_get(*v)?.clone()))
                     .collect::<Result<Vec<_>>>()?;
                 Ok(self.alloc_type(&Type::Tuple(types)))
+            }
+            Value::Reference(ptr) => {
+                let inner = self.interpret_as_type_literal(&self.memory.err_get(*ptr)?.clone())?;
+                Ok(self.alloc_type(&Type::Reference(inner)))
             }
             _ => bail!(
                 "Cannot interpret value as type literal: {}",

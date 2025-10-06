@@ -2,8 +2,10 @@ use anyhow::Result;
 use anyhow::*;
 use core::str;
 use pest::Parser;
+// HashSet was previously used for cycle detection; we now use tortoise-and-hare.
 use std::{collections::HashMap, fs::File, io::Read, ptr};
 
+use crate::util::Pipeable;
 use crate::{
     FRAMEBUF, NodeReg, Rule, SCREEN_HEIGHT, SCREEN_WIDTH, StringInt, TypeReg, UParser, WINDOW,
     ast::{Literal, Node, NodeId, StringId, TypeId, TypeIdent},
@@ -56,9 +58,9 @@ impl Runtime {
             ("builtin", Type::Builtin),
         ];
         for (name, typ) in basic_types {
-            let type_id = self.typereg.get_or_intern(&typ);
-            self.memory
-                .alloc_global(self.strint.get_or_intern(name), Value::Type(type_id));
+            let type_id: TypeId = TypeId::from_raw(self.typereg.get_or_intern(&typ));
+            let name_id = StringId::from_raw(self.strint.get_or_intern(name));
+            self.memory.alloc_global(name_id, Value::Type(type_id));
         }
     }
 
@@ -80,7 +82,7 @@ impl Runtime {
             Ok(Value::Boolean(result))
         };
         self.memory.alloc_global(
-            self.strint.get_or_intern("supports"),
+            crate::ast::StringId::from_raw(self.strint.get_or_intern("supports")),
             Value::Builtin(supports as BuiltinFn),
         );
 
@@ -95,7 +97,7 @@ impl Runtime {
             Ok(Value::Nil)
         }
         self.memory.alloc_global(
-            self.strint.get_or_intern("print"),
+            crate::ast::StringId::from_raw(self.strint.get_or_intern("print")),
             Value::Builtin(print as BuiltinFn),
         );
 
@@ -108,7 +110,7 @@ impl Runtime {
             Ok(Value::Type(type_id))
         }
         self.memory.alloc_global(
-            self.strint.get_or_intern("typeof"),
+            crate::ast::StringId::from_raw(self.strint.get_or_intern("typeof")),
             Value::Builtin(typeof_ as BuiltinFn),
         );
 
@@ -124,7 +126,7 @@ impl Runtime {
             Ok(Value::Nil)
         }
         self.memory.alloc_global(
-            self.strint.get_or_intern("sleep"),
+            crate::ast::StringId::from_raw(self.strint.get_or_intern("sleep")),
             Value::Builtin(sleep as BuiltinFn),
         );
 
@@ -135,7 +137,7 @@ impl Runtime {
             Ok(Value::Number(SCREEN_WIDTH as f64))
         }
         self.memory.alloc_global(
-            self.strint.get_or_intern("screenWidth"),
+            crate::ast::StringId::from_raw(self.strint.get_or_intern("screenWidth")),
             Value::Builtin(get_screen_width as BuiltinFn),
         );
         fn get_screen_height(runtime: &mut Runtime, args: Vec<Value>) -> anyhow::Result<Value> {
@@ -145,7 +147,7 @@ impl Runtime {
             Ok(Value::Number(SCREEN_HEIGHT as f64))
         }
         self.memory.alloc_global(
-            self.strint.get_or_intern("screenHeight"),
+            crate::ast::StringId::from_raw(self.strint.get_or_intern("screenHeight")),
             Value::Builtin(get_screen_height as BuiltinFn),
         );
         fn set_pixel(runtime: &mut Runtime, args: Vec<Value>) -> anyhow::Result<Value> {
@@ -202,7 +204,7 @@ impl Runtime {
             Ok(Value::Nil)
         }
         self.memory.alloc_global(
-            self.strint.get_or_intern("setPixel"),
+            crate::ast::StringId::from_raw(self.strint.get_or_intern("setPixel")),
             Value::Builtin(set_pixel as BuiltinFn),
         );
         fn render(runtime: &mut Runtime, args: Vec<Value>) -> anyhow::Result<Value> {
@@ -226,431 +228,501 @@ impl Runtime {
             Ok(Value::Nil)
         }
         self.memory.alloc_global(
-            self.strint.get_or_intern("render"),
+            crate::ast::StringId::from_raw(self.strint.get_or_intern("render")),
             Value::Builtin(render as BuiltinFn),
         );
     }
+
+    /// Collapse a pointer by following `Value::Reference` indirections.
+    /// Returns the final `ValPtr` that points to a non-Reference value.
+    /// Detects simple cycles and returns an error if a cycle is found.
+    pub fn collapse_ptr(&self, start: ValPtr) -> anyhow::Result<ValPtr> {
+        // Use Floyd's tortoise and hare algorithm to detect cycles without
+        // allocating a HashSet on each collapse. We advance the tortoise by
+        // one reference and the hare by two; if they meet there's a cycle.
+        // If either pointer reaches a non-Reference value we return that
+        // terminal pointer.
+        let mut tortoise = start;
+        // Advance hare one step initially (so hare != tortoise unless a cycle of length 1)
+        let mut hare = start;
+
+        // Helper to step a pointer one reference forward; returns Ok(Some(next))
+        // if the value is a Reference, Ok(None) if it's a non-reference terminal, or
+        // Err if the pointer is missing.
+        let step = |ptr: ValPtr| -> anyhow::Result<Option<ValPtr>> {
+            let val = self
+                .memory
+                .get(ptr)
+                .ok_or(anyhow!("Value ID not found while collapsing pointer"))?;
+            match val {
+                Value::Reference(inner) => Ok(Some(*inner)),
+                _ => Ok(None),
+            }
+        };
+
+        loop {
+            // move tortoise by one
+            match step(tortoise)? {
+                Some(next_t) => tortoise = next_t,
+                None => return Ok(tortoise),
+            }
+
+            // move hare by one
+            match step(hare)? {
+                Some(next_h) => hare = next_h,
+                None => return Ok(hare),
+            }
+
+            // move hare by one more (second step)
+            match step(hare)? {
+                Some(next_h2) => hare = next_h2,
+                None => return Ok(hare),
+            }
+
+            if tortoise == hare {
+                bail!(
+                    "Reference cycle detected while collapsing pointer: {:?}",
+                    tortoise
+                );
+            }
+        }
+    }
+
+    /// If the evaluation is a reference, collapse it to the referenced value pointer;
+    /// otherwise return the evaluation's pointer unchanged.
+    pub fn collapse_eval(&self, eval: &Evaluation) -> anyhow::Result<ValPtr> {
+        // collapse regardless of AccessMode to make callers agnostic
+        self.collapse_ptr(eval.val_ptr)
+    }
+
+    /// Collapse a pointer and return a reference to the final value.
+    /// The returned reference is tied to &self and should not be held across
+    /// mutations to memory.
+    pub fn collapse_value(&self, id: ValPtr) -> anyhow::Result<&Value> {
+        let final_id = self.collapse_ptr(id)?;
+        self.memory.err_get(final_id)
+    }
     pub fn eval(&mut self, node_id: NodeId) -> anyhow::Result<Evaluation> {
-        let node = self.nodes.get(node_id).cloned();
+        let node = self.nodes.get(node_id.raw()).cloned();
         self.last_node_id = Some(node_id);
         self.depth += 1;
         let r = match node {
             Some(node) => match &node.node {
-                Node::Export(expr) => {
-                    let expr_value = self.eval(*expr)?;
-                    if let Node::Declaration { name, .. } = &self.nodes.get(*expr).unwrap().node {
-                        let name = self.strint.resolve(*name).unwrap().to_string();
-                        println!("exporting, doing nothing ");
-                        Ok(expr_value)
-                    } else {
-                        bail!("Can only export declarations");
+                Node::Block { statements } => {
+                    let mut ret = self.memory.malloc(Value::Nil);
+                    for id in statements {
+                        ret = self.eval(*id)?.val_ptr;
+                    }
+                    Evaluation::new(ret)
+                }
+                Node::Import(_) => todo!(),
+                Node::Export(_) => todo!(),
+                Node::Literal(literal) => match literal {
+                    Literal::Number(num) => self.memory.malloc(Value::Number(*num)),
+                    Literal::String(s) => self.memory.malloc(Value::String(self.resolve_str(*s).unwrap().to_string())),
+                    Literal::FString { parts } => {
+                        let mut s = String::new();
+                        for part in parts {
+                            let val = self
+                                .eval_collapsed(*part)?
+                                .pipe(|ptr| self.memory.err_get(ptr.val_ptr))?;
+                            s.push_str(&self.value_to_string(val)?);
+                        }
+                        self.memory.malloc(Value::String(s))
+                    }
+                    Literal::Boolean(b) => self.memory.malloc(Value::Boolean(*b)).into(),
+                    Literal::Nil => self.memory.malloc(Value::Nil).into(),
+                    Literal::Array { elements } => {
+                        let mut ptrs: Vec<ValPtr> = Vec::with_capacity(elements.len());
+                        for elem in elements.iter() {
+                            let ev = self.eval(*elem)?;
+                            ptrs.push(ev.val_ptr);
+                        }
+                        let ty = self.derive_type(ptrs.as_slice())?;
+                        self.memory.malloc(Value::Array {
+                            of: ty,
+                            elements: ptrs,
+                        })
+                    }
+                    Literal::Tuple { elements } => {
+                        let mut ptrs: Vec<ValPtr> = Vec::with_capacity(elements.len());
+                        for elem in elements.iter() {
+                            let ev = self.eval(*elem)?;
+                            ptrs.push(ev.val_ptr);
+                        }
+                        self.memory.malloc(Value::Tuple(ptrs))
                     }
                 }
-                Node::FieldAccess {
-                    object: object_id,
-                    field: field_id,
-                } => {
-                    let object = self.eval(*object_id)?;
-                    let object = match self.memory.err_get(object.val_ptr)? {
-                        Value::Object(map) => {
-                            if let Some(value) = map.get(field_id) {
-                                value
-                            } else {
-                                let field = self.strint.resolve(*field_id).unwrap().to_string();
-                                bail!("Field '{}' not found in object", field);
-                            }
-                        }
-                        Value::Module(path_id) => &self.memory.malloc(Value::Nil),
-                        _ => {
-                            let field = self.strint.resolve(*field_id).unwrap().to_string();
-                            bail!("Cannot access field '{}' on non-object value", field);
-                        }
-                    };
-                    Ok(Evaluation::new(*object))
-                }
-                Node::Reference(node) => {
-                    let referenced = self.eval(*node)?;
-                    Ok(self
-                        .memory
-                        .malloc(Value::Reference(referenced.val_ptr))
-                        .into())
-                }
-                Node::Import(path_id) => {
-                    let path = self.strint.resolve(*path_id).unwrap().to_string();
-
-                    Ok(self.memory.malloc(Value::Module(*path_id)).into())
-                }
-                Node::Literal(literal) => {
-                    let val = match literal {
-                        Literal::Number(n) => Value::Number(*n),
-                        Literal::FString { parts } => {
-                            // Collect node IDs first to avoid borrowing self mutably and immutably
-                            let node_ids: Vec<NodeId> = parts.iter().copied().collect();
-                            let mut string_parts = Vec::with_capacity(node_ids.len());
-                            for nid in node_ids {
-                                let eval = self.eval(nid)?;
-                                let val = self.memory.err_get(eval.val_ptr)?;
-                                string_parts.push(self.value_to_string(val)?);
-                            }
-                            let parts = string_parts.join("");
-                            Value::String(parts).into()
-                        }
-                        Literal::String(s) => {
-                            let s = self.strint.resolve(*s).unwrap();
-                            Value::String(s.to_string())
-                        }
-                        Literal::Boolean(b) => Value::Boolean(*b),
-                        Literal::Nil => Value::Nil,
-                        Literal::Array { elements } => {
-                            let element_values = elements
-                                .iter()
-                                .map(|nid| self.eval(*nid).map(|eval| eval.val_ptr))
-                                .collect::<anyhow::Result<Vec<_>>>()?;
-                            Value::Array {
-                                of: self.derive_type(&element_values)?,
-                                elements: element_values,
-                            }
-                        }
-                        Literal::Tuple { elements } => {
-                            let element_values = elements
-                                .iter()
-                                .map(|nid| self.eval(*nid).map(|eval| eval.val_ptr))
-                                .collect::<anyhow::Result<Vec<_>>>()?;
-                            Value::Tuple(element_values)
-                        }
-                    };
-                    Ok(self.malloc_eval(val))
-                }
-                Node::Identifier(name_id) => {
-                    let name: &str = self.strint.resolve(*name_id).unwrap();
-                    if let Some(value_id) = self.memory.search(*name_id) {
-                        if let Some(value) = self.memory.get(value_id) {
-                            Ok(Evaluation::new(value_id))
-                        } else {
-                            bail!("Value not found for identifier: '{}'", name);
-                        }
-                    } else {
-                        bail!("Undefined identifier: '{}'", name);
-                    }
-                }
-                Node::TypeIdent(type_ident) => {
-                    let base = self.strint.resolve(type_ident.base).unwrap();
-                    let Some(Some(mut t)) = self
-                        .memory
-                        .search(type_ident.base)
-                        .map(|id| self.memory.get(id).cloned())
-                    else {
-                        bail!("Undefined type identifier: '{}'", base);
-                    };
-                    for _ in 0..type_ident.dims {
-                        let type_id = match t {
-                            Value::Type(id) => id,
-                            _ => bail!("Expected type, found value in type identifier '{}'", base),
-                        };
-                        let array_type = types::Type::Array(type_id);
-                        let array_type_id = self.typereg.get_or_intern(&array_type);
-                        t = Value::Type(array_type_id);
-                    }
-                    Ok(self.malloc_eval(t))
+                .into(),
+                Node::Identifier(ident) => self
+                    .memory
+                    .search_ptr(*ident)
+                    .ok_or(anyhow!(
+                        "Failed to find identifier '{}'",
+                        self.resolve_str(*ident).unwrap()
+                    ))?
+                    .into(),
+                Node::FieldAccess { object, field } => {
+                    let eval = self
+                        .eval(*object)?
+                        .pipe(|eval| self.collapse_eval(&eval))?
+                        .pipe(|ptr| self.memory.err_get(ptr))?;
+                    Evaluation::new(match eval {
+                        Value::Object(map) => *map.get(field).ok_or(anyhow!(
+                            "Missing field {}",
+                            self.resolve_str(*field).unwrap()
+                        ))?,
+                        _ => bail!(
+                            "Field access is not supported for {}",
+                            self.get_val_typeid(eval.clone())?
+                                .pipe(|t| self.resolve_typename(t))
+                        ),
+                    })
                 }
                 Node::IfExpr {
                     condition,
                     then_branch,
                     else_branch,
                 } => {
-                    let ptr = self.eval(*condition)?.val_ptr;
-                    let cond_value = self.memory.err_get(ptr)?.is_truthy();
-                    if cond_value {
-                        self.eval(*then_branch)
-                    } else if let Some(else_branch) = else_branch {
-                        self.eval(*else_branch)
+                    if self
+                        .eval(*condition)?
+                        .val_ptr
+                        .pipe(|i| self.memory.err_get(i))?
+                        .is_truthy()
+                    {
+                        self.eval(*then_branch)?
                     } else {
-                        Ok(self.memory.malloc(Value::Nil).into())
+                        if let Some(else_branch) = else_branch {
+                            self.eval(*else_branch)?
+                        } else {
+                            Evaluation::new(self.memory.malloc(Value::Nil))
+                        }
                     }
                 }
                 Node::WhileExpr { condition, body } => {
-                    let mut val = self.memory.malloc(Value::Nil);
-                    let ptr = self.eval(*condition)?.val_ptr;
-                    while self.memory.err_get(ptr)?.is_truthy() {
+                    let mut ret = self.memory.malloc(Value::Nil);
+
+                    while self
+                        .eval(*condition)?
+                        .val_ptr
+                        .pipe(|i| self.memory.err_get(i))?
+                        .is_truthy()
+                    {
                         let eval = self.eval(*body)?;
-                        match eval.reason {
-                            EvalReason::Return => return Ok(eval),
-                            EvalReason::Break => break,
-                            EvalReason::Neither => {
-                                val = eval.val_ptr;
-                            }
+                        if eval.did_break() {
+                            break;
                         }
                     }
-                    Ok(val.into())
+                    Evaluation::new(ret)
                 }
                 Node::ForExpr {
-                    init: _,
-                    condition: _,
-                    update: _,
-                    body: _,
+                    init,
+                    condition,
+                    update,
+                    body,
                 } => todo!(),
                 Node::Declaration {
-                    name: name_id,
+                    name,
                     ann,
                     value,
                     export,
                 } => {
-                    let name = self.strint.resolve(*name_id).unwrap().to_string();
-                    let val_ptr = if let Some(value) = value {
-                        self.eval(*value)?.val_ptr
+                    let eval = if let Some(value) = value {
+                        self.eval(*value)?
                     } else {
-                        self.memory.malloc(Value::Nil)
+                        Evaluation::new(self.memory.malloc(Value::Nil))
                     };
+                    let val_ptr = eval.val_ptr;
 
-                    let val = self.memory.err_get(val_ptr)?.clone();
-
-                    if let Some(type_node_id) = ann {
-                        let ty = {
-                            let val = self.eval(*type_node_id)?.val_ptr;
-                            let val = self.memory.err_get(val)?.clone();
-                            self.interpret_as_type_literal(&val)?
-                        };
-                        let expected_type_id = &self.typereg.get_or_intern(&Type::Type);
-                        self.type_assert(&ty, expected_type_id)?;
-                        if self.get_val_typeid(val.clone())? != *expected_type_id {
-                            let found_type = {
-                                let id = self.get_val_typeid(val)?;
-                                self.typereg.resolve(id)
-                            };
-                            let expected_type = self.typereg.resolve(*expected_type_id);
-                            bail!(
-                                "Type mismatch in declaration of {}: expected {:?}, found {:?}",
-                                name,
-                                expected_type,
-                                found_type,
-                            );
-                        }
+                    if let Some(node) = ann {
+                        let ty_eval = self.eval(*node)?;
+                        let ty_val = self.memory.err_get(ty_eval.val_ptr)?.clone();
+                        let ty = self.interpret_as_type_literal(&ty_val)?;
+                        let found_type =
+                            self.get_val_typeid(self.memory.err_get(val_ptr)?.clone())?;
+                        self.type_assert(&found_type, &ty)?;
                     }
 
-                    println!("linking name {name} to value {:?}", val);
-                    let type_id = self.get_val_typeid(val)?;
-                    if *export {
-                        println!("exporting, doing nothing ");
-                    }
-                    self.memory.attrib(*name_id, val_ptr);
-                    Ok(self.malloc_eval(Value::Type(type_id)))
+                    // Allocate in memory and bind to name
+                    self.memory
+                        .alloc_global(*name, self.memory.err_get(val_ptr)?.clone());
+                    Evaluation::new(val_ptr)
                 }
-                Node::Assign {
-                    name: name_id,
-                    node,
-                } => {
-                    let eval = self.eval(*node)?;
+                Node::Assign { name, node } => {
+                    let ptr = self.memory.search_ptr(*name).ok_or(anyhow!(
+                        "Couldn't find value name {}",
+                        self.resolve_str(*name).unwrap()
+                    ))?;
 
-                    self.memory.attrib(*name_id, eval.val_ptr);
-                    Ok(eval.into())
+                    let val = self
+                        .eval(*node)?
+                        .val_ptr
+                        .pipe(|p| self.memory.err_get(p))?
+                        .clone();
+
+                    let mut_val = self
+                        .memory
+                        .get_mut(ptr)
+                        .ok_or(anyhow!("Couldn't find value attributed to pointer {}", ptr))?;
+
+                    match mut_val {
+                        Value::Reference(ptr) => {
+                            let ptr = ptr.clone();
+                            *self.memory.err_get_mut(ptr)? = val
+                        }
+                        _ => *mut_val = val,
+                    }
+
+                    Evaluation::new(self.malloc(Value::Nil))
                 }
                 Node::Function { params, body } => {
-                    let (resolved_params, unresolved_params): (Vec<_>, Vec<_>) = params
-                        .iter()
-                        .map(|p| ((p.name, self.resolve_type_ident(&p.type_))))
-                        .partition(|(_, res)| res.is_ok());
-                    let resolved_params: Vec<(StringId, TypeId)> = resolved_params
-                        .into_iter()
-                        .map(|(name, typ)| (name, typ.unwrap()))
-                        .collect();
-                    if !unresolved_params.is_empty() {
-                        bail!(
-                            "Failed to resolve parameter types: {:#?}",
-                            unresolved_params
-                                .into_iter()
-                                .map(|(_, res)| res.err().unwrap().to_string())
-                                .collect::<Vec<_>>()
-                        );
+                    // Build function value with resolved parameter types. Return type defaults to Any.
+                    let mut fn_params: Vec<(StringId, TypeId)> = Vec::with_capacity(params.len());
+                    for p in params.iter() {
+                        let ty_val = self
+                            .eval(p.type_)?
+                            .val_ptr
+                            .pipe(|p| self.memory.err_get(p))?.clone();
+                        let ty_id = self.interpret_as_type_literal(&ty_val)?;
+                        fn_params.push((p.name, ty_id));
                     }
-                    Ok(self
-                        .memory
-                        .malloc(Value::Function {
-                            params: resolved_params,
-                            body: body.clone(),
-                            return_type: self.typereg.get_or_intern(&Type::Any),
-                        })
-                        .into())
+                    let return_type = self.alloc_type(&Type::Any);
+                    let func = Value::Function {
+                        params: fn_params,
+                        body: *body,
+                        return_type,
+                    };
+                    self.malloc(func).into()
                 }
                 Node::FunctionCall { node, args } => {
-                    let ptr = self.eval(*node)?.val_ptr;
-                    let func = self.memory.err_get(ptr)?.clone();
+                    // Evaluate the callee and collapse any references
+                    let callee_eval = self.eval(*node)?;
+                    let callee_ptr = self.collapse_eval(&callee_eval)?;
+                    let callee_val_clone = self.memory.err_get(callee_ptr)?.clone();
 
-                    if let Value::Builtin(builtin) = func {
-                        let arg_values: Vec<Value> = args
-                            .iter()
-                            .map(|&arg| -> anyhow::Result<Value> {
-                                let eval = self.eval(arg)?;
-                                Ok(self.memory.err_get(eval.val_ptr)?.clone())
-                            })
-                            .collect::<anyhow::Result<Vec<_>>>()?;
-                        return builtin(self, arg_values).map(|v| v.to_eval(self));
-                    }
-
-                    let name = {
-                        let span = self.nodes.get(*node).unwrap().span;
-                        let str = self.source.get(span.start..span.end).unwrap();
-                        str.trim().to_string()
-                    };
-
-                    if let Value::Function {
-                        params,
-                        body,
-                        return_type: _,
-                    } = func
-                    {
-                        if params.len() != args.len() {
-                            bail!(
-                                "Function {} expects {} arguments, got {}",
-                                name,
-                                params.len(),
-                                args.len()
-                            );
+                    match callee_val_clone {
+                        Value::Builtin(f) => {
+                            // Evaluate args to concrete Values
+                            let mut evaluated_args: Vec<Value> = Vec::with_capacity(args.len());
+                            for a in args.iter() {
+                                let ev = self.eval_collapsed(*a)?;
+                                let v = self.memory.err_get(ev.val_ptr)?.clone();
+                                evaluated_args.push(v);
+                            }
+                            let result = f(self, evaluated_args)?;
+                            self.malloc(result).into()
                         }
-                        let arg_ids: Vec<NodeId> = args.iter().copied().collect();
-                        let mut arg_values = Vec::with_capacity(arg_ids.len());
-                        for arg in arg_ids {
-                            arg_values.push(self.eval(arg)?);
-                        }
-
-                        for (i, ((stringid, param_type_id), arg_value)) in
-                            params.iter().zip(arg_values.iter()).enumerate()
-                        {
-                            let arg_type_id = self
-                                .get_val_typeid(self.memory.err_get(arg_value.val_ptr)?.clone())?;
-                            let type_id = self
-                                .get_val_typeid(self.memory.err_get(arg_value.val_ptr)?.clone())?;
-
-                            if !supports(param_type_id, &arg_type_id, &self.typereg).unwrap_or(true)
-                            {
+                        Value::Function { params, body, .. } => {
+                            if params.len() != args.len() {
                                 bail!(
-                                    "Type mismatch for argument {} in call to {}: expected {:?}, found {:?}",
-                                    i + 1,
-                                    name,
-                                    self.typereg
-                                        .resolve(*param_type_id)
-                                        .map(|t| t.to_string(&self.strint, &self.typereg))
-                                        .unwrap_or("unknown".to_string()),
-                                    self.typereg
-                                        .resolve(arg_type_id)
-                                        .map(|t| t.to_string(&self.strint, &self.typereg))
-                                        .unwrap_or("unknown".to_string())
+                                    "Function expected {} arguments, got {}",
+                                    params.len(),
+                                    args.len()
                                 );
                             }
+
+                            // New function-local scope
+                            self.memory.push_scope();
+
+                            // Bind parameters respecting declared types. If a parameter's
+                            // declared type is a Reference(T), the argument must be a
+                            // Value::Reference and the referenced value must match T.
+                            // Otherwise we pass-by-value: allocate a copy (if arg is a
+                            // Reference we dereference it first).
+                            // Precompute expected inner reference types (if any) to avoid
+                            // holding immutable borrows while we later need &mut self.
+                            let mut expected_inner: Vec<Option<TypeId>> =
+                                Vec::with_capacity(params.len());
+                            for (_name, expected_ty) in params.iter() {
+                                let opt = match self.resolve_type(*expected_ty) {
+                                    Some(crate::runtime::types::Type::Reference(inner)) => {
+                                        Some(*inner)
+                                    }
+                                    _ => None,
+                                };
+                                expected_inner.push(opt);
+                            }
+
+                            for (i, (name, expected_ty)) in params.iter().enumerate() {
+                                // Evaluate the argument (not collapsed) so we can inspect for Reference
+                                let arg_eval = self.eval(args[i])?;
+                                let arg_val = self.memory.err_get(arg_eval.val_ptr)?.clone();
+
+                                if let Some(inner_type) = expected_inner[i] {
+                                    // expected a Reference(inner_type)
+                                    if let Value::Reference(inner_ptr) = arg_val {
+                                        let inner_val_clone =
+                                            self.memory.err_get(inner_ptr)?.clone();
+                                        let found_type = self.get_val_typeid(inner_val_clone)?;
+                                        self.type_assert(&found_type, &inner_type)?;
+                                        let ref_ptr =
+                                            self.memory.malloc(Value::Reference(inner_ptr));
+                                        self.memory.attrib(*name, ref_ptr);
+                                    } else {
+                                        bail!(
+                                            "Parameter '{}' expects a reference type {}, but argument is not a reference",
+                                            self.resolve_str(*name).unwrap_or("<param>"),
+                                            self.resolve_typename(*expected_ty)
+                                        );
+                                    }
+                                } else {
+                                    // pass-by-value: argument must be a non-reference value.
+                                    // Do NOT implicitly dereference a `&T` to `T` — `&T` is a distinct
+                                    // type and must be rejected here.
+                                    match arg_val {
+                                        Value::Reference(inner_ptr) => {
+                                            // Build a readable found-type string like "&number"
+                                            let inner_val_clone =
+                                                self.memory.err_get(inner_ptr)?.clone();
+                                            let inner_type =
+                                                self.get_val_typeid(inner_val_clone)?;
+                                            let found_typename =
+                                                format!("&{}", self.resolve_typename(inner_type));
+                                            bail!(
+                                                "Parameter '{}' expects {}, but argument is {}",
+                                                self.resolve_str(*name).unwrap_or("<param>"),
+                                                self.resolve_typename(*expected_ty),
+                                                found_typename
+                                            );
+                                        }
+                                        other => {
+                                            let val_ptr = self.memory.malloc(other);
+                                            let found_type = self.get_val_typeid(
+                                                self.memory.err_get(val_ptr)?.clone(),
+                                            )?;
+                                            self.type_assert(&found_type, expected_ty)?;
+                                            self.memory.attrib(*name, val_ptr);
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Execute function body
+                            let result = self.eval(body)?;
+
+                            // Pop function-local scope
+                            self.memory.pop_scope();
+
+                            // If body returned early, convert to a plain Evaluation
+                            if result.did_return() {
+                                Evaluation::new(result.val_ptr)
+                            } else {
+                                Evaluation::new(result.val_ptr)
+                            }
                         }
-                        self.memory.push_scope();
-                        for (i, arg_value) in arg_values.into_iter().enumerate() {
-                            let name_id = params[i].0;
-                            self.memory.attrib(name_id, arg_value.val_ptr);
-                        }
-                        let result = self.eval(body);
-                        self.memory.pop_scope();
-                        result
-                    } else {
-                        bail!("{} is not a function", name)
+                        other => bail!(
+                            "Attempted to call non-function value: {}",
+                            self.value_to_string(&other)?
+                        ),
                     }
                 }
                 Node::UnaryOp { op, expr } => {
-                    let expr_value = self.eval(*expr)?;
-                    let result = self
-                        .unary_operate(self.memory.err_get(expr_value.val_ptr)?, op)
-                        .map_err(|e| anyhow!(e))?;
-                    Ok(Evaluation {
-                        val_ptr: self.memory.malloc(result),
-                        reason: expr_value.reason,
-                    })
+                    let ev = self.eval(*expr)?;
+                    let ptr = self.collapse_eval(&ev)?;
+                    let val = self.memory.err_get(ptr)?.clone();
+                    let out = self.unary_operate(&val, op)?;
+                    self.malloc(out).into()
                 }
                 Node::BinaryOp { left, op, right } => {
-                    let left_value = self.eval(*left)?;
-                    let right_value = self.eval(*right)?;
-                    let val_a = self.memory.err_get(left_value.val_ptr)?.clone();
-                    let val_b = self.memory.err_get(right_value.val_ptr)?.clone();
-                    let result = self.operate(&val_a, &val_b, &op).map_err(|e| anyhow!(e))?;
-                    Ok(Evaluation {
-                        val_ptr: self.memory.malloc(result),
-                        reason: EvalReason::Neither,
-                    })
+                    let l = self.eval(*left)?;
+                    let lptr = self.collapse_eval(&l)?;
+                    let lval = self.memory.err_get(lptr)?.clone();
+                    let rval = self.eval(*right)?;
+                    let rptr = self.collapse_eval(&rval)?;
+                    let rval = self.memory.err_get(rptr)?.clone();
+                    let out = self.operate(&lval, &rval, op)?;
+                    self.malloc(out).into()
                 }
-                Node::Block { statements } => {
-                    self.memory.push_scope();
-                    let mut last_eval = Evaluation {
-                        val_ptr: self.memory.malloc(Value::Nil),
-                        reason: EvalReason::Neither,
-                    };
-                    for stmt in statements {
-                        last_eval = self.eval(*stmt)?;
-                        // If we hit a return or break, stop executing statements
-                        if matches!(last_eval.reason, EvalReason::Return | EvalReason::Break) {
-                            break;
-                        }
-                    }
-                    self.memory.pop_scope();
-                    Ok(last_eval)
-                }
-                Node::IndexAccess { base: array, index } => {
-                    let array_ptr = self.eval(*array)?.val_ptr;
-                    let index_ptr = self.eval(*index)?.val_ptr;
-                    let array_value = self.memory.err_get(array_ptr)?;
-                    let index_value = self.memory.err_get(index_ptr)?;
-                    let Value::Number(n) = index_value else {
-                        bail!("Index must be a number");
-                    };
-                    let index = *n as usize;
-                    match &array_value {
-                        Value::Array { of: _, elements } => {
-                            if index >= elements.len() {
-                                bail!("Index out of bounds");
-                            }
-                            Ok(elements[index].clone().into())
+                Node::IndexAccess { base, index } => {
+                    let b = self.eval(*base)?;
+                    let bptr = self.collapse_eval(&b)?;
+                    let base_val_clone = self.memory.err_get(bptr)?.clone();
+                    let i = self.eval(*index)?;
+                    let iptr = self.collapse_eval(&i)?;
+                    let idx_val_clone = self.memory.err_get(iptr)?.clone();
+
+                    match base_val_clone {
+                        Value::Array { elements, .. } => {
+                            let idx = if let Value::Number(n) = idx_val_clone {
+                                n as usize
+                            } else {
+                                bail!("Array index must be a number")
+                            };
+                            let elem_ptr =
+                                *elements.get(idx).ok_or(anyhow!("Index out of bounds"))?;
+                            Evaluation::new(elem_ptr)
                         }
                         Value::Tuple(elements) => {
-                            if index >= elements.len() {
-                                bail!("Index out of bounds");
-                            }
-                            Ok(elements[index].clone().into())
+                            let idx = if let Value::Number(n) = idx_val_clone {
+                                n as usize
+                            } else {
+                                bail!("Tuple index must be a number")
+                            };
+                            let elem_ptr =
+                                *elements.get(idx).ok_or(anyhow!("Index out of bounds"))?;
+                            Evaluation::new(elem_ptr)
                         }
-                        _ => bail!("Cannot index into non-array value"),
+                        _ => bail!(
+                            "Indexing is not supported for {}",
+                            self.get_val_typeid(base_val_clone)?
+                                .pipe(|t| self.resolve_typename(t))
+                        ),
                     }
                 }
-                Node::Return(value) => {
-                    let value = match value {
-                        Some(expr) => self.eval(*expr)?.val_ptr,
-                        None => self.memory.malloc(Value::Nil),
-                    };
-                    Ok(Evaluation {
-                        val_ptr: value,
-                        reason: EvalReason::Return,
-                    })
+                Node::Reference(node) => {
+                    // Create a reference to the evaluated expression
+                    let ev = self.eval(*node)?;
+                    let ptr = ev.val_ptr;
+                    self.malloc(Value::Reference(ptr)).into()
                 }
-                Node::Break(_) => Ok(Evaluation {
-                    val_ptr: self.memory.malloc(Value::Nil),
-                    reason: EvalReason::Break,
-                }),
+                Node::Return(expr_opt) => {
+                    if let Some(expr) = expr_opt {
+                        let ev = self.eval_collapsed(*expr)?;
+                        Evaluation::new(ev.val_ptr).with_reason(EvalReason::Return)
+                    } else {
+                        Evaluation::new(self.memory.malloc(Value::Nil))
+                            .with_reason(EvalReason::Return)
+                    }
+                }
+                Node::Break(expr_opt) => {
+                    if let Some(expr) = expr_opt {
+                        let ev = self.eval_collapsed(*expr)?;
+                        Evaluation::new(ev.val_ptr).with_reason(EvalReason::Break)
+                    } else {
+                        Evaluation::new(self.memory.malloc(Value::Nil))
+                            .with_reason(EvalReason::Break)
+                    }
+                }
             },
             None => bail!("Node ID {:?} not found", node_id),
         };
         self.depth -= 1;
-        r
+        Ok(r)
     }
-    pub fn resolve_type_ident(&mut self, type_ident: &TypeIdent) -> anyhow::Result<TypeId> {
-        let base = self.strint.resolve(type_ident.base).unwrap();
-        let Some(mut t) = self.memory.search_val(type_ident.base).cloned() else {
-            bail!("Undefined type identifier: {}", base);
+
+    /// Evaluate `node_id` and return an `Evaluation` whose pointer has been
+    /// collapsed through any `Value::Reference` indirections. This lets callers
+    /// ignore whether the evaluated result was a reference or a value.
+    pub fn eval_collapsed(&mut self, node_id: NodeId) -> anyhow::Result<Evaluation> {
+        let eval = self.eval(node_id)?;
+        // collapse_eval borrows &self, but we currently have &mut self; to call
+        // collapse_eval we reborrow as immutable using a short-lived scope.
+        let collapsed_ptr = {
+            // Create a temporary immutable borrow to collapse the pointer.
+            let r: &Runtime = &*self;
+            r.collapse_eval(&eval)?
         };
-        for _ in 0..type_ident.dims {
-            let type_id = self.interpret_as_type_literal(&t)?;
-            let array_type = types::Type::Array(type_id);
-            let array_type_id = self.typereg.get_or_intern(&array_type);
-            t = Value::Type(array_type_id);
-        }
-        let type_id = self.interpret_as_type_literal(&t)?;
-        Ok(type_id)
+        Ok(Evaluation {
+            val_ptr: collapsed_ptr,
+            reason: eval.reason,
+        })
     }
     pub fn type_assert(&mut self, found: &TypeId, expected: &TypeId) -> anyhow::Result<()> {
         if !supports(found, expected, &self.typereg).unwrap_or(false) {
             bail!(
                 "Type assertion failed: expected {:?}, found {:?}",
-                self.typereg.resolve(*expected),
-                self.typereg.resolve(*found)
+                self.typereg.resolve(expected.raw()),
+                self.typereg.resolve(found.raw())
             );
         }
         Ok(())
@@ -672,13 +744,30 @@ impl Evaluation {
             reason: EvalReason::Neither,
         }
     }
-    pub fn is_return(&self) -> bool {
+    pub fn did_return(&self) -> bool {
         matches!(self.reason, EvalReason::Return)
     }
-    pub fn is_break(&self) -> bool {
+    pub fn did_break(&self) -> bool {
         matches!(self.reason, EvalReason::Break)
     }
+    pub fn with_reason(self, reason: EvalReason) -> Self {
+        Self { reason, ..self }
+    }
 }
+// impl Evaluation {
+//     /// Collapse this evaluation's pointer by following Reference chains and
+//     /// return the final `ValPtr`.
+//     pub fn collapse(&self, runtime: &Runtime) -> anyhow::Result<ValPtr> {
+//         runtime.collapse_eval(self)
+//     }
+
+//     /// Collapse this evaluation and return a reference to the final `Value`.
+//     /// The returned reference is tied to `&runtime` and must not be held across
+//     /// mutable operations on the runtime memory.
+//     pub fn collapse_value<'a>(&self, runtime: &'a Runtime) -> anyhow::Result<&'a Value> {
+//         self.collapse(runtime)?.pipe(|id| runtime.collapse_value(id))
+//     }
+// }
 impl Into<ValPtr> for Evaluation {
     fn into(self) -> ValPtr {
         self.val_ptr
@@ -697,4 +786,9 @@ pub enum EvalReason {
     Return,
     Break,
     Neither,
+}
+#[derive(Debug, Clone, PartialEq)]
+pub enum AccessMode {
+    Value,
+    Reference,
 }

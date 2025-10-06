@@ -44,7 +44,7 @@ impl Type {
                     .map(|ty| format!(
                         "{}",
                         typereg
-                            .resolve(*ty)
+                                .resolve(ty.raw())
                             .unwrap_or(&Type::Any)
                             .to_string(strint, typereg)
                     ))
@@ -58,7 +58,7 @@ impl Type {
                     .map(|ty| format!(
                         "{}",
                         typereg
-                            .resolve(*ty)
+                                .resolve(ty.raw())
                             .unwrap_or(&Type::Any)
                             .to_string(strint, typereg)
                     ))
@@ -68,19 +68,19 @@ impl Type {
             Type::Array(of) => format!(
                 "array<{}>",
                 typereg
-                    .resolve(*of)
+                        .resolve(of.raw())
                     .unwrap_or(&Type::Any)
                     .to_string(strint, typereg)
             ),
             Type::Object(fields) => format!(
                 "object<{{{}}}>",
                 fields
-                    .iter()
+                        .iter()
                     .map(|(name, ty)| format!(
                         "{}: {}",
-                        strint.resolve(*name).unwrap_or(&"unknown".to_string()),
+                        strint.resolve(name.raw()).unwrap_or(&"unknown".to_string()),
                         typereg
-                            .resolve(*ty)
+                                .resolve(ty.raw())
                             .unwrap_or(&Type::Any)
                             .to_string(strint, typereg)
                     ))
@@ -97,14 +97,14 @@ impl Type {
                     .map(|ty| format!(
                         "{}",
                         typereg
-                            .resolve(*ty)
+                            .resolve(ty.raw())
                             .unwrap_or(&Type::Any)
                             .to_string(strint, typereg)
                     ))
                     .collect::<Vec<_>>()
                     .join(", "),
                 typereg
-                    .resolve(*return_type)
+                    .resolve(return_type.raw())
                     .unwrap_or(&Type::Any)
                     .to_string(strint, typereg)
             ),
@@ -115,7 +115,7 @@ impl Type {
             Type::Reference(ty) => format!(
                 "&{}",
                 typereg
-                    .resolve(*ty)
+                    .resolve(ty.raw())
                     .unwrap_or(&Type::Any)
                     .to_string(strint, typereg)
             ),
@@ -126,8 +126,8 @@ impl Type {
         if a == b {
             return *a;
         }
-        let type_a = typereg.resolve(*a).unwrap_or(&Type::Any).clone();
-        let type_b = typereg.resolve(*b).unwrap_or(&Type::Any).clone();
+    let type_a = typereg.resolve(a.raw()).unwrap_or(&Type::Any).clone();
+    let type_b = typereg.resolve(b.raw()).unwrap_or(&Type::Any).clone();
         match (type_a, type_b) {
             (Type::Any, _) => *a,
             (_, Type::Any) => *b,
@@ -137,18 +137,18 @@ impl Type {
                         types_a.push(ty);
                     }
                 }
-                typereg.get_or_intern(&Type::Union(types_a))
+                TypeId::from_raw(typereg.get_or_intern(&Type::Union(types_a)))
             }
             (Type::Union(mut types), ty) | (ty, Type::Union(mut types)) => {
-                if !types.contains(&typereg.get_or_intern(&ty)) {
-                    types.push(typereg.get_or_intern(&ty));
+        if !types.contains(&TypeId::from_raw(typereg.get_or_intern(&ty))) {
+            types.push(TypeId::from_raw(typereg.get_or_intern(&ty)));
                 }
-                typereg.get_or_intern(&Type::Union(types))
+        TypeId::from_raw(typereg.get_or_intern(&Type::Union(types)))
             }
             (a, b) => {
-                let id_a = typereg.get_or_intern(&a);
-                let id_b = typereg.get_or_intern(&b);
-                typereg.get_or_intern(&Type::Union(vec![id_a, id_b]))
+                let id_a = TypeId::from_raw(typereg.get_or_intern(&a));
+                let id_b = TypeId::from_raw(typereg.get_or_intern(&b));
+                    TypeId::from_raw(typereg.get_or_intern(&Type::Union(vec![id_a, id_b])))
             }
         }
     }
@@ -158,8 +158,8 @@ pub fn supports(a_id: &TypeId, b_id: &TypeId, typereg: &TypeReg) -> Option<bool>
     if a_id == b_id {
         return Some(true);
     }
-    let a = typereg.resolve(*a_id)?;
-    let b = typereg.resolve(*b_id)?;
+    let a = typereg.resolve(a_id.raw())?;
+    let b = typereg.resolve(b_id.raw())?;
     match (a, b) {
         (Type::Any, _) => Some(true),
         (_, Type::Any) => Some(false),
@@ -167,7 +167,7 @@ pub fn supports(a_id: &TypeId, b_id: &TypeId, typereg: &TypeReg) -> Option<bool>
             let all_a_in_b = types_a.iter().all(|ty| types_b.contains(ty));
             Some(all_a_in_b)
         }
-        (Type::Union(types), _) => {
+            (Type::Union(types), _) => {
             for ty in types {
                 if ty == b_id {
                     return Some(true);
@@ -187,7 +187,7 @@ pub fn supports(a_id: &TypeId, b_id: &TypeId, typereg: &TypeReg) -> Option<bool>
         (Type::Number, Type::Number) => Some(true),
         (Type::String, Type::String) => Some(true),
         (Type::Boolean, Type::Boolean) => Some(true),
-        (Type::Array(a), Type::Array(b)) => supports(a, b, typereg),
+            (Type::Array(a), Type::Array(b)) => supports(&a, &b, typereg),
         (Type::Object(_), Type::Object(_)) => Some(a_id == b_id),
         (
             Type::Function {

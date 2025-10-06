@@ -2,16 +2,16 @@ use crate::{ast::{StringId, TypeId}, runtime::{memory::ValPtr, types::Type, valu
 
 impl Runtime {
     pub fn resolve_str(&self, id: StringId) -> Option<&str> {
-        self.strint.resolve(id)
+        self.strint.resolve(id.raw())
     }
     pub fn intern_str(&mut self, s: &str) -> StringId {
-        self.strint.get_or_intern(s)
+        StringId::from_raw(self.strint.get_or_intern(s))
     }
     pub fn resolve_type(&self, id: TypeId) -> Option<&Type> {
-        self.typereg.resolve(id)
+        self.typereg.resolve(id.raw())
     }
     pub fn alloc_type(&mut self, ty: &Type) -> TypeId {
-        self.typereg.get_or_intern(ty)
+        TypeId::from_raw(self.typereg.get_or_intern(ty))
     }
     pub fn resolve_typename(&self, id: TypeId) -> String {
         if let Some(ty) = self.resolve_type(id) {
