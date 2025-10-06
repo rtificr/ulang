@@ -2,7 +2,7 @@ use anyhow::Result;
 use anyhow::*;
 use core::str;
 use pest::Parser;
-// HashSet was previously used for cycle detection; we now use tortoise-and-hare.
+use std::collections::HashSet;
 use std::{collections::HashMap, fs::File, io::Read, ptr};
 
 use crate::util::Pipeable;
