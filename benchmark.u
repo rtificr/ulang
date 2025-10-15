@@ -1,19 +1,5 @@
-let screenHeight = screenHeight()
-let screenWidth = screenWidth()
-
-print("screen width: " + screenWidth)
-print("screen height: " + screenHeight)
-
-let x = 0
-while x < screenWidth {
-    let y = 0
-    while y < screenHeight {
-        let r = x / screenWidth
-        let g = y / screenHeight
-        let b = 0.0
-        setPixel((x, y), (r, g, b))
-        y = y + 1
-    }
-    x = x + 1
-    render()
+let fibo = {
+    ["hi"] = fn() print("hi"),
+    [5] = 10
 }
+fibo["hi"]()

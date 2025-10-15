@@ -11,7 +11,7 @@ impl Runtime {
         Ok(TypeId::from_raw(self.typereg.get_or_intern(&ty)))
     }
     pub fn get_val_type(&mut self, value: Value) -> Result<Type> {
-    Ok(match value {
+        Ok(match value {
             Value::Nil => Type::Nil,
             Value::Number(_) => Type::Number,
             Value::String(_) => Type::String,
@@ -23,14 +23,7 @@ impl Runtime {
                     .collect::<Result<Vec<_>>>()?,
             ),
             Value::Array { of, .. } => Type::Array(of),
-                Value::Object(map) => Type::Object(
-                map.iter()
-                    .map(|(k, v)| {
-                            self.get_val_typeid(self.memory.err_get(*v)?.clone())
-                            .map(|typeid| (*k, typeid))
-                    })
-                    .collect::<Result<Vec<_>>>()?,
-            ),
+            Value::Table(_) => Type::Table,
             Value::Function {
                 params,
                 return_type,
@@ -62,7 +55,7 @@ impl Runtime {
         Ok(match value {
             Value::Nil => "nil".into(),
             Value::Number(n) => n.to_string(),
-            Value::String(s) => s.clone(),
+            Value::String(s) => self.resolve_str(*s).unwrap().to_string(),
             Value::Boolean(b) => b.to_string(),
             Value::Tuple(elements) => format!(
                 "({})",
@@ -80,13 +73,14 @@ impl Runtime {
                     .collect::<Result<Vec<_>>>()?
                     .join(", ")
             ),
-            Value::Object(map) => format!(
+            Value::Table(map) => format!(
                 "{{{}}}",
-                map.iter()
+                map.inner()
+                    .iter()
                     .map(|(k, v)| {
                         Ok(format!(
                             "{}: {}",
-                            self.strint.resolve(k.raw()).unwrap(),
+                            self.value_to_string(self.memory.err_get(*v)?)?,
                             self.value_to_string(self.memory.err_get(*v)?)?
                         ))
                     })
@@ -108,7 +102,9 @@ impl Runtime {
                     ))
                     .collect::<Vec<_>>()
                     .join(", "),
-                self.typereg.resolve(return_type.raw()).unwrap_or(&Type::Any)
+                self.typereg
+                    .resolve(return_type.raw())
+                    .unwrap_or(&Type::Any)
             ),
             Value::Builtin(f) => format!("<builtin fn {:?}>", f),
             Value::Module(path_id) => {
@@ -140,8 +136,16 @@ impl Runtime {
         if a_id == b_id {
             return *a_id;
         }
-    let a = self.typereg.resolve(a_id.raw()).unwrap_or(&Type::Any).clone();
-    let b = self.typereg.resolve(b_id.raw()).unwrap_or(&Type::Any).clone();
+        let a = self
+            .typereg
+            .resolve(a_id.raw())
+            .unwrap_or(&Type::Any)
+            .clone();
+        let b = self
+            .typereg
+            .resolve(b_id.raw())
+            .unwrap_or(&Type::Any)
+            .clone();
         match (a, b) {
             (Type::Any, _) => *a_id,
             (_, Type::Any) => *b_id,
@@ -158,7 +162,9 @@ impl Runtime {
                 }
                 self.alloc_type(&Type::Union(types))
             }
-            (_, _) => TypeId::from_raw(self.typereg.get_or_intern(&Type::Union(vec![*a_id, *b_id]))),
+            (_, _) => {
+                TypeId::from_raw(self.typereg.get_or_intern(&Type::Union(vec![*a_id, *b_id])))
+            }
         }
     }
 

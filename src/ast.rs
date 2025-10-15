@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Display};
+use std::fmt::Display;
 
 use interns::Symbol;
 // slab and string-interner imports removed; AST uses the raw alias types via macro
@@ -107,7 +107,7 @@ pub enum Node {
     WhileExpr { condition: NodeId, body: NodeId },
     ForExpr { init: NodeId, condition: NodeId, update: NodeId, body: NodeId },
     Declaration { name: StringId, ann: Option<NodeId>, value: Option<NodeId>, export: bool },
-    Assign { name: StringId, node: NodeId },
+    Assign { target: NodeId, node: NodeId },
     Function { params: Vec<FuncParam>, body: NodeId },
     FunctionCall { node: NodeId, args: Vec<NodeId> },
     UnaryOp { op: Operator, expr: NodeId },
@@ -197,4 +197,7 @@ pub enum Literal {
     Nil,
     Array { elements: Vec<NodeId> },
     Tuple { elements: Vec<NodeId> },
+    Table {
+        elements: Vec<(NodeId, NodeId)>
+    }
 }

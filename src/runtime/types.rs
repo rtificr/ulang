@@ -18,7 +18,7 @@ pub enum Type {
     Tuple(Vec<TypeId>),
     Union(Vec<TypeId>),
     Array(TypeId),
-    Object(Vec<(StringId, TypeId)>),
+    Table,
     Function {
         params: Vec<TypeId>,
         return_type: TypeId,
@@ -72,21 +72,7 @@ impl Type {
                     .unwrap_or(&Type::Any)
                     .to_string(strint, typereg)
             ),
-            Type::Object(fields) => format!(
-                "object<{{{}}}>",
-                fields
-                        .iter()
-                    .map(|(name, ty)| format!(
-                        "{}: {}",
-                        strint.resolve(name.raw()).unwrap_or(&"unknown".to_string()),
-                        typereg
-                                .resolve(ty.raw())
-                            .unwrap_or(&Type::Any)
-                            .to_string(strint, typereg)
-                    ))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
+            Type::Table => "table".to_string(),
             Type::Function {
                 params,
                 return_type,
@@ -153,8 +139,12 @@ impl Type {
         }
     }
 }
-
 pub fn supports(a_id: &TypeId, b_id: &TypeId, typereg: &TypeReg) -> Option<bool> {
+    match typereg.resolve(a_id.raw())? {
+        Type::Any => return Some(true),
+        Type::TBD => return Some(true),
+        _ => {}
+    }
     if a_id == b_id {
         return Some(true);
     }
@@ -188,7 +178,7 @@ pub fn supports(a_id: &TypeId, b_id: &TypeId, typereg: &TypeReg) -> Option<bool>
         (Type::String, Type::String) => Some(true),
         (Type::Boolean, Type::Boolean) => Some(true),
             (Type::Array(a), Type::Array(b)) => supports(&a, &b, typereg),
-        (Type::Object(_), Type::Object(_)) => Some(a_id == b_id),
+        (Type::Table, Type::Table) => Some(a_id == b_id),
         (
             Type::Function {
                 params: params_a,

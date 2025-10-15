@@ -333,28 +333,28 @@ impl Noder {
                 self.handle_pair(inner)?
             }
             Rule::assignment => {
+                // assignment = postfix "=" expr
                 let mut inner_rules = pair.into_inner();
-                let first = inner_rules.next().unwrap();
+                let lhs_pair = inner_rules.next().unwrap();
+                let rhs_pair = inner_rules.next().unwrap();
 
-                // Check if this is an assignment (identifier = expr) or just logical_or
-                if inner_rules.peek().is_some() {
-                    // This is an assignment: identifier = expr
-                    let name = match self.handle_pair(first)? {
-                        Some(nodeid) => self.nodes[nodeid.raw()]
-                            .as_identifier()
-                            .ok_or(ParseError::InvalidAssignmentTarget)?,
-                        None => return Ok(None),
-                    };
-                    let value = match self.handle_pair(inner_rules.next().unwrap())? {
-                        Some(id) => id,
-                        None => return Ok(None),
-                    };
-                    let node = Node::Assign { name, node: value };
-                    Some(self.insert_spanned_node(node, span))
-                } else {
-                    // This is just a logical_or expression
-                    self.handle_pair(first)?
-                }
+                // We expect the LHS to be a postfix expression. Parse it and
+                // inspect the produced node to determine the target kind.
+                let lhs_node = match self.handle_pair(lhs_pair)? {
+                    Some(id) => id,
+                    None => return Ok(None),
+                };
+
+                let value = match self.handle_pair(rhs_pair)? {
+                    Some(id) => id,
+                    None => return Ok(None),
+                };
+
+                // Accept any postfix as an assignment target; store the LHS node id
+                // as the target and the RHS as the assigned node. Validation of
+                // whether the target is writable happens at runtime.
+                let node = Node::Assign { target: lhs_node, node: value };
+                Some(self.insert_spanned_node(node, span))
             }
             Rule::logical_or => {
                 let inner_rules: Vec<_> = pair.into_inner().collect();
@@ -899,6 +899,27 @@ impl Noder {
                 }
                 let elements: Vec<NodeId> = inner.into_iter().filter_map(|r| r.unwrap()).collect();
                 let node = Node::Literal(Literal::Tuple { elements });
+                Some(self.insert_spanned_node(node, span))
+            }
+            Rule::table => {
+                let mut inner = pair.into_inner();
+                let elements: Vec<anyhow::Result<_>> = inner.into_iter().map(|p| self.handle_pair(p)).collect();
+                let elements: Vec<NodeId> = elements.into_iter()
+                    .map(|r| r.unwrap().unwrap())
+                    .collect();
+                    
+                let mut windows = Vec::new();
+                for chunk in elements.chunks(2) {
+                    if chunk.len() == 2 {
+                        let key = chunk[0].clone();
+                        let value = chunk[1].clone();
+                        windows.push((key, value));
+                    } else {
+                        bail!("Table element chunk does not have exactly 2 elements");
+                    }
+                }
+                
+                let node = Node::Literal(Literal::Table { elements: windows });
                 Some(self.insert_spanned_node(node, span))
             }
             Rule::call_suffix | Rule::index_suffix | Rule::field_suffix => None,

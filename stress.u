@@ -1,0 +1,95 @@
+// Single-file comprehensive stress test for Ulang
+// Exercises recursion, allocations, loops, function calls, and strings.
+
+// Deep recursion to stress call stack
+let deep_rec = fn(n: number) {
+    if n <= 0 {
+        1
+    } else {
+        deep_rec(n - 1) + 1
+    }
+}
+
+// Make many small objects and return their sum
+let make_objects_and_sum = fn(count: number) {
+    let arr = []
+    let i = 0
+    while i < count {
+        // construct an object with a few numeric fields
+        let obj = { "a" = i, "b" = i * 3, "c" = i % 7 }
+        arr = arr + [obj]
+        i = i + 1
+    }
+
+    // iterate and compute a numeric aggregate
+    let sum = 0
+    i = 0
+    while i < count {
+        let v = arr[i]
+        sum = sum + v.a + v.b + v.c
+        i = i + 1
+    }
+    sum
+}
+
+// Many tiny function calls
+let inc = fn(x: number) { x + 1 }
+let call_many = fn(times: number) {
+    let s = 0
+    let i = 0
+    while i < times {
+        s = s + inc(i)
+        i = i + 1
+    }
+    s
+}
+
+// Build a longer string by concatenation
+let build_string = fn(len: number) {
+    let s = ""
+    let i = 0
+    while i < len {
+        s = s + "x"
+        i = i + 1
+    }
+    s
+}
+
+// Indexing and tuple/array operations
+let array_ops = fn(n: number) {
+    let arr = []
+    let i = 0
+    while i < n {
+        arr = arr + [i]
+        i = i + 1
+    }
+    let acc = 0
+    i = 0
+    while i < n {
+        acc = acc + arr[i]
+        i = i + 1
+    }
+    acc
+}
+
+// Final combined scenario
+let stress_run = fn() {
+    // tune these numbers upward to increase stress
+    let depth = 400
+    let obj_count = 2000
+    let call_count = 20000
+    let str_len = 10000
+    let arr_n = 5000
+
+    let r1 = deep_rec(depth)
+    let r2 = make_objects_and_sum(obj_count)
+    let r3 = call_many(call_count)
+    let s = build_string(str_len)
+    let r4 = array_ops(arr_n)
+
+    // Print a small summary (printing the full string would be noisy)
+    print("stress done", r1, r2, r3, r4, s[0])
+    nil
+}
+
+stress_run()

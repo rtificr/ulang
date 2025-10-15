@@ -1,4 +1,7 @@
-use crate::{ast::{StringId, TypeId}, runtime::{memory::ValPtr, types::Type, value::Value, EvalReason, Evaluation, Runtime}};
+use crate::{
+    ast::{StringId, TypeId},
+    runtime::{EvalReason, Evaluation, Runtime, memory::ValPtr, types::Type, value::Value},
+};
 
 impl Runtime {
     pub fn resolve_str(&self, id: StringId) -> Option<&str> {
@@ -31,6 +34,14 @@ impl Runtime {
         self.malloc(value).into()
     }
     pub fn resolve_value_str(&self, id: ValPtr) -> Option<String> {
-        self.memory.get(id).map(|v| self.value_to_string(v)).transpose().ok().flatten()
+        self.memory
+            .get(id)
+            .map(|v| self.value_to_string(v))
+            .transpose()
+            .ok()
+            .flatten()
+    }
+    pub fn refify(&mut self, ptr: ValPtr) -> ValPtr {
+        self.malloc(Value::Reference(ptr))
     }
 }

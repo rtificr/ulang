@@ -1,11 +1,11 @@
 let fibonacci = fn(n: number) {
     let ifib = fn(n: number, depth: number) {
         if n <= 1 {
-            print(f"{"|" * depth} {n}")
+            print(f"{"|" * depth}{n}")
             n
         } else {
             let answer = ifib(n - 1, depth + 1) + ifib(n - 2, depth + 1)
-            print(f"{"|" * depth} {answer}")
+            print(f"{"|" * depth}{answer}")
             answer
         }
     }
@@ -14,4 +14,4 @@ let fibonacci = fn(n: number) {
 }
 
 let num = 8
-print(f"fibonacci({num}) is {fibonacci(num)}!")
+print(f"fibonacci({num}) is {fibonacci(num)}")

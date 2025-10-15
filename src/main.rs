@@ -5,21 +5,35 @@ use pest::{
     iterators::{Pair, Pairs},
 };
 use slab::Slab;
-use std::{collections::HashMap, fs::File, io::{stdin, Read}, time::Instant};
+use std::{
+    collections::HashMap,
+    fs::File,
+    io::{Read, stdin},
+    time::Instant,
+};
 use string_interner::{
     StringInterner,
     backend::{Backend, BucketBackend, BufferBackend},
 };
 
-use crate::{ast::{FuncParam, Literal, Node, NodeId, Operator, Span, SpannedNode, StringId, TypeId, TypeIdent, StringIdRaw, TypeIdRaw, NodeIdRaw}, err::ParseError, noder::Noder, printexpr::print_expr, runtime::{types::Type, Runtime}};
+use crate::{
+    ast::{
+        FuncParam, Literal, Node, NodeId, NodeIdRaw, Operator, Span, SpannedNode, StringId,
+        StringIdRaw, TypeId, TypeIdRaw, TypeIdent,
+    },
+    err::ParseError,
+    noder::Noder,
+    printexpr::print_expr,
+    runtime::{Runtime, types::Type},
+};
 
 mod ast;
-mod noder;
-mod printexpr;
-mod scopes;
-mod runtime;
 mod err;
 mod module;
+mod noder;
+mod printexpr;
+mod runtime;
+mod scopes;
 mod util;
 
 #[derive(pest_derive::Parser)]
@@ -32,23 +46,29 @@ static mut FRAMEBUF: &'static mut [u32] = &mut [0; SCREEN_WIDTH * SCREEN_HEIGHT]
 static mut WINDOW: Option<minifb::Window> = None;
 fn main() {
     unsafe {
-        WINDOW = Some(minifb::Window::new(
-            "Ulang Graphics",
-            SCREEN_WIDTH,
-            SCREEN_HEIGHT,
-            minifb::WindowOptions::default(),
-        ).unwrap());
+        WINDOW = Some(
+            minifb::Window::new(
+                "Ulang Graphics",
+                SCREEN_WIDTH,
+                SCREEN_HEIGHT,
+                minifb::WindowOptions::default(),
+            )
+            .unwrap(),
+        );
         {
             let this = &raw mut WINDOW;
             match *this {
                 Some(ref mut x) => Some(x),
                 None => None,
             }
-        }.unwrap().update_with_buffer(FRAMEBUF, SCREEN_WIDTH, SCREEN_HEIGHT).unwrap();
+        }
+        .unwrap()
+        .update_with_buffer(FRAMEBUF, SCREEN_WIDTH, SCREEN_HEIGHT)
+        .unwrap();
     }
     let args: Vec<String> = std::env::args().collect();
     let filename = args.get(1).map(|s| s.as_str()).unwrap_or("benchmark.u");
-    
+
     let mut file = File::open(filename).expect("Could not open file");
     let mut buf = String::new();
     file.read_to_string(&mut buf).expect("Could not read file");
@@ -88,16 +108,32 @@ fn main() {
     let mut runtime = Runtime::new(nodereg, strint, typereg, &buf);
     runtime.init_ministd();
     runtime.init_types();
-    match runtime.eval(root) {
-        Ok(evaluation) => {
-            let value_str = runtime.value_to_string(runtime.memory.err_get(evaluation.val_ptr).unwrap()).unwrap();
-            let (nodereg, strint, typereg) = runtime.finish();
+
+    // Run the interpreter on a separate OS thread with a bigger stack to
+    // avoid stack overflow for deeply recursive programs (like the stress test).
+    let handle = std::thread::Builder::new()
+        .name("ulang-runtime".into())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || -> anyhow::Result<(String, std::time::Duration)> {
+            let eval_res = runtime.eval(root)?;
+            let value_str =
+                runtime.value_to_string(runtime.memory.err_get(eval_res.val_ptr).unwrap())?;
             let runtime_duration = runtime_start.elapsed();
+            Ok((value_str, runtime_duration))
+        })
+        .expect("Failed to spawn runtime thread");
+
+    match handle.join() {
+        Ok(Ok((value_str, runtime_duration))) => {
             println!("Runtime in {:?}", runtime_duration);
             println!("Result: {}", value_str);
         }
-        Err(e) => {
+        Ok(Err(e)) => {
             eprintln!("Runtime error: {}", e);
+            return;
+        }
+        Err(_) => {
+            eprintln!("Runtime thread panicked");
             return;
         }
     }

@@ -5,6 +5,7 @@ use pest::Parser;
 use std::collections::HashSet;
 use std::{collections::HashMap, fs::File, io::Read, ptr};
 
+use crate::runtime::value::Table;
 use crate::util::Pipeable;
 use crate::{
     FRAMEBUF, NodeReg, Rule, SCREEN_HEIGHT, SCREEN_WIDTH, StringInt, TypeReg, UParser, WINDOW,
@@ -178,7 +179,7 @@ impl Runtime {
                 .iter()
                 .map(|e| runtime.memory.err_get(*e))
                 .collect::<Result<Vec<_>>>()?;
-            let r = if let Value::Number(n) = elements[0] {
+            let r = if let Value::Number(n) = elements[2] {
                 (n * 255.0).clamp(0.0, 255.0) as u32
             } else {
                 0
@@ -188,7 +189,7 @@ impl Runtime {
             } else {
                 0
             };
-            let b = if let Value::Number(n) = elements[2] {
+            let b = if let Value::Number(n) = elements[0] {
                 (n * 255.0).clamp(0.0, 255.0) as u32
             } else {
                 0
@@ -319,7 +320,7 @@ impl Runtime {
                 Node::Export(_) => todo!(),
                 Node::Literal(literal) => match literal {
                     Literal::Number(num) => self.memory.malloc(Value::Number(*num)),
-                    Literal::String(s) => self.memory.malloc(Value::String(self.resolve_str(*s).unwrap().to_string())),
+                    Literal::String(s) => self.memory.malloc(Value::String(*s)),
                     Literal::FString { parts } => {
                         let mut s = String::new();
                         for part in parts {
@@ -328,6 +329,7 @@ impl Runtime {
                                 .pipe(|ptr| self.memory.err_get(ptr.val_ptr))?;
                             s.push_str(&self.value_to_string(val)?);
                         }
+                        let s = self.intern_str(&s);
                         self.memory.malloc(Value::String(s))
                     }
                     Literal::Boolean(b) => self.memory.malloc(Value::Boolean(*b)).into(),
@@ -352,6 +354,16 @@ impl Runtime {
                         }
                         self.memory.malloc(Value::Tuple(ptrs))
                     }
+                    Literal::Table { elements } => {
+                        let mut table = Table::new();
+                        for (key, value) in elements {
+                            let key_ptr = self.eval(*key)?.val_ptr;
+                            let key = self.memory.err_get(key_ptr)?.clone();
+                            let value = self.eval(*value)?.val_ptr;
+                            table.insert(key, value);
+                        }
+                        self.malloc(Value::Table(table))
+                    }
                 }
                 .into(),
                 Node::Identifier(ident) => self
@@ -362,22 +374,16 @@ impl Runtime {
                         self.resolve_str(*ident).unwrap()
                     ))?
                     .into(),
-                Node::FieldAccess { object, field } => {
-                    let eval = self
-                        .eval(*object)?
-                        .pipe(|eval| self.collapse_eval(&eval))?
-                        .pipe(|ptr| self.memory.err_get(ptr))?;
-                    Evaluation::new(match eval {
-                        Value::Object(map) => *map.get(field).ok_or(anyhow!(
-                            "Missing field {}",
-                            self.resolve_str(*field).unwrap()
-                        ))?,
-                        _ => bail!(
-                            "Field access is not supported for {}",
-                            self.get_val_typeid(eval.clone())?
-                                .pipe(|t| self.resolve_typename(t))
-                        ),
-                    })
+                Node::FieldAccess { object, .. } => {
+                    // Field access read semantics not implemented yet; produce an error
+                    let eval = self.eval(*object)?;
+                    let ptr = self.collapse_eval(&eval)?;
+                    let val = self.memory.err_get(ptr)?.clone();
+                    bail!(
+                        "Field access is not supported for {}",
+                        self.get_val_typeid(val)?
+                            .pipe(|t| self.resolve_typename(t))
+                    )
                 }
                 Node::IfExpr {
                     condition,
@@ -400,7 +406,7 @@ impl Runtime {
                     }
                 }
                 Node::WhileExpr { condition, body } => {
-                    let mut ret = self.memory.malloc(Value::Nil);
+                    let ret = self.memory.malloc(Value::Nil);
 
                     while self
                         .eval(*condition)?
@@ -415,18 +421,8 @@ impl Runtime {
                     }
                     Evaluation::new(ret)
                 }
-                Node::ForExpr {
-                    init,
-                    condition,
-                    update,
-                    body,
-                } => todo!(),
-                Node::Declaration {
-                    name,
-                    ann,
-                    value,
-                    export,
-                } => {
+                Node::ForExpr { init: _init, condition: _condition, update: _update, body: _body } => todo!(),
+                Node::Declaration { name, ann, value, export: _export } => {
                     let eval = if let Some(value) = value {
                         self.eval(*value)?
                     } else {
@@ -443,16 +439,13 @@ impl Runtime {
                         self.type_assert(&found_type, &ty)?;
                     }
 
-                    // Allocate in memory and bind to name
                     self.memory
                         .alloc_global(*name, self.memory.err_get(val_ptr)?.clone());
                     Evaluation::new(val_ptr)
                 }
-                Node::Assign { name, node } => {
-                    let ptr = self.memory.search_ptr(*name).ok_or(anyhow!(
-                        "Couldn't find value name {}",
-                        self.resolve_str(*name).unwrap()
-                    ))?;
+                Node::Assign { target, node } => {
+                    let targ = self.eval(*target)?;
+                    let targ = self.refify(self.collapse_ptr(targ.val_ptr)?);
 
                     let val = self
                         .eval(*node)?
@@ -462,9 +455,9 @@ impl Runtime {
 
                     let mut_val = self
                         .memory
-                        .get_mut(ptr)
-                        .ok_or(anyhow!("Couldn't find value attributed to pointer {}", ptr))?;
-
+                        .get_mut(targ)
+                        .ok_or(anyhow!("Couldn't find value attributed to pointer {}", targ))?;
+                    
                     match mut_val {
                         Value::Reference(ptr) => {
                             let ptr = ptr.clone();
@@ -482,7 +475,8 @@ impl Runtime {
                         let ty_val = self
                             .eval(p.type_)?
                             .val_ptr
-                            .pipe(|p| self.memory.err_get(p))?.clone();
+                            .pipe(|p| self.memory.err_get(p))?
+                            .clone();
                         let ty_id = self.interpret_as_type_literal(&ty_val)?;
                         fn_params.push((p.name, ty_id));
                     }
@@ -650,7 +644,7 @@ impl Runtime {
                             };
                             let elem_ptr =
                                 *elements.get(idx).ok_or(anyhow!("Index out of bounds"))?;
-                            Evaluation::new(elem_ptr)
+                            Evaluation::new(self.refify(elem_ptr))
                         }
                         Value::Tuple(elements) => {
                             let idx = if let Value::Number(n) = idx_val_clone {
@@ -660,7 +654,11 @@ impl Runtime {
                             };
                             let elem_ptr =
                                 *elements.get(idx).ok_or(anyhow!("Index out of bounds"))?;
-                            Evaluation::new(elem_ptr)
+                            Evaluation::new(self.refify(elem_ptr))
+                        }
+                        Value::Table(table) => {
+                            let ptr = *table.get(&idx_val_clone).unwrap_or(&self.memory.malloc(Value::Nil));
+                            Evaluation::new(self.refify(ptr))
                         }
                         _ => bail!(
                             "Indexing is not supported for {}",

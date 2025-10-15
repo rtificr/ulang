@@ -98,20 +98,25 @@ pub fn print_expr(nodes: &NodeReg, strint: &StringInt, depth: usize, node_id: No
                         }
                         println!("{} )", tabs);
                     }
+                    Literal::Table { elements } => {
+                        println!("{}Table {{", tabs);
+                        for (key, value) in elements {
+                            println!("{}  Key:", tabs);
+                            print_expr(nodes, strint, depth+2, *key);
+                            println!("{}  Value:", tabs);
+                            print_expr(nodes, strint, depth+2, *value);
+                        }
+                        println!("{}}}", tabs);
+                    }
                 },
                 Node::Identifier(name) => {
                     let name = strint.resolve(name.raw()).unwrap();
                     println!("{}Identifier(\"{}\")", tabs, name);
                 }
-                Node::ForExpr {
-                    init,
-                    condition,
-                    update,
-                    body,
-                } => {}
-                Node::Assign { name, node: value } => {
-                    let name = strint.resolve(name.raw()).unwrap_or("unknown");
-                    println!("{}\"{}\" = :", tabs, name);
+                Node::ForExpr { init: _init, condition: _condition, update: _update, body: _body } => {}
+                Node::Assign { target, node: value } => {
+                    print_expr(nodes, strint, depth + 1, *target);
+                    println!("{} = :", tabs);
                     print_expr(nodes, strint, depth + 1, *value);
                 }
                 Node::Function { params, body } => {
@@ -120,7 +125,7 @@ pub fn print_expr(nodes: &NodeReg, strint: &StringInt, depth: usize, node_id: No
                         let node = param.type_;
                         print_expr(nodes, strint, depth + 1, node);
                     }
-                    println!(") {{");
+                    println!("{tabs}) {{");
                     print_expr(nodes, strint, depth + 1, *body);
                     println!("{}}}", tabs);
                 }
@@ -152,8 +157,9 @@ pub fn print_expr(nodes: &NodeReg, strint: &StringInt, depth: usize, node_id: No
                     println!("{}}}", tabs);
                 }
                 Node::IndexAccess { base, index } => {
-                    println!("{}IndexAccess [", tabs);
+                    println!("{}Index", tabs);
                     print_expr(nodes, strint, depth + 1, *base);
+                    println!("{}[", tabs);
                     print_expr(nodes, strint, depth + 1, *index);
                     println!("{}]", tabs);
                 }
