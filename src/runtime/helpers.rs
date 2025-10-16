@@ -1,6 +1,6 @@
 use crate::{
     ast::{StringId, TypeId},
-    runtime::{EvalReason, Evaluation, Runtime, memory::ValPtr, types::Type, value::Value},
+    runtime::{Evaluation, Runtime, memory::ValPtr, types::Type, value::Value},
 };
 
 impl Runtime {

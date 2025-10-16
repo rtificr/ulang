@@ -902,7 +902,7 @@ impl Noder {
                 Some(self.insert_spanned_node(node, span))
             }
             Rule::table => {
-                let mut inner = pair.into_inner();
+                let inner = pair.into_inner();
                 let elements: Vec<anyhow::Result<_>> = inner.into_iter().map(|p| self.handle_pair(p)).collect();
                 let elements: Vec<NodeId> = elements.into_iter()
                     .map(|r| r.unwrap().unwrap())

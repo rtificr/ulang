@@ -88,11 +88,12 @@ impl Runtime {
                     .join(", ")
             ),
             Value::Function {
+                enclosed,
                 params,
                 body,
                 return_type,
             } => format!(
-                "<function {:?} -> {:?}>",
+                "<function {:?} -> {:?}, {:?}>",
                 params
                     .iter()
                     .map(|(name, ty)| format!(
@@ -104,7 +105,13 @@ impl Runtime {
                     .join(", "),
                 self.typereg
                     .resolve(return_type.raw())
-                    .unwrap_or(&Type::Any)
+                    .unwrap_or(&Type::Any),
+                enclosed
+                    .inner()
+                    .iter()
+                    .map(|(k, v)| { self.strint.resolve(*k).unwrap_or("unknown") })
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ),
             Value::Builtin(f) => format!("<builtin fn {:?}>", f),
             Value::Module(path_id) => {

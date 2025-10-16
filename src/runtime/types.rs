@@ -1,12 +1,4 @@
-use std::collections::HashMap;
-
-use string_interner::StringInterner;
-
-use crate::{
-    StringInt, TypeReg,
-    ast::{StringId, TypeId},
-    runtime::value::Value,
-};
+use crate::{StringInt, TypeReg, ast::TypeId};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub enum Type {
@@ -44,7 +36,7 @@ impl Type {
                     .map(|ty| format!(
                         "{}",
                         typereg
-                                .resolve(ty.raw())
+                            .resolve(ty.raw())
                             .unwrap_or(&Type::Any)
                             .to_string(strint, typereg)
                     ))
@@ -58,7 +50,7 @@ impl Type {
                     .map(|ty| format!(
                         "{}",
                         typereg
-                                .resolve(ty.raw())
+                            .resolve(ty.raw())
                             .unwrap_or(&Type::Any)
                             .to_string(strint, typereg)
                     ))
@@ -68,7 +60,7 @@ impl Type {
             Type::Array(of) => format!(
                 "array<{}>",
                 typereg
-                        .resolve(of.raw())
+                    .resolve(of.raw())
                     .unwrap_or(&Type::Any)
                     .to_string(strint, typereg)
             ),
@@ -112,8 +104,8 @@ impl Type {
         if a == b {
             return *a;
         }
-    let type_a = typereg.resolve(a.raw()).unwrap_or(&Type::Any).clone();
-    let type_b = typereg.resolve(b.raw()).unwrap_or(&Type::Any).clone();
+        let type_a = typereg.resolve(a.raw()).unwrap_or(&Type::Any).clone();
+        let type_b = typereg.resolve(b.raw()).unwrap_or(&Type::Any).clone();
         match (type_a, type_b) {
             (Type::Any, _) => *a,
             (_, Type::Any) => *b,
@@ -126,15 +118,15 @@ impl Type {
                 TypeId::from_raw(typereg.get_or_intern(&Type::Union(types_a)))
             }
             (Type::Union(mut types), ty) | (ty, Type::Union(mut types)) => {
-        if !types.contains(&TypeId::from_raw(typereg.get_or_intern(&ty))) {
-            types.push(TypeId::from_raw(typereg.get_or_intern(&ty)));
+                if !types.contains(&TypeId::from_raw(typereg.get_or_intern(&ty))) {
+                    types.push(TypeId::from_raw(typereg.get_or_intern(&ty)));
                 }
-        TypeId::from_raw(typereg.get_or_intern(&Type::Union(types)))
+                TypeId::from_raw(typereg.get_or_intern(&Type::Union(types)))
             }
             (a, b) => {
                 let id_a = TypeId::from_raw(typereg.get_or_intern(&a));
                 let id_b = TypeId::from_raw(typereg.get_or_intern(&b));
-                    TypeId::from_raw(typereg.get_or_intern(&Type::Union(vec![id_a, id_b])))
+                TypeId::from_raw(typereg.get_or_intern(&Type::Union(vec![id_a, id_b])))
             }
         }
     }
@@ -157,7 +149,7 @@ pub fn supports(a_id: &TypeId, b_id: &TypeId, typereg: &TypeReg) -> Option<bool>
             let all_a_in_b = types_a.iter().all(|ty| types_b.contains(ty));
             Some(all_a_in_b)
         }
-            (Type::Union(types), _) => {
+        (Type::Union(types), _) => {
             for ty in types {
                 if ty == b_id {
                     return Some(true);
@@ -177,7 +169,7 @@ pub fn supports(a_id: &TypeId, b_id: &TypeId, typereg: &TypeReg) -> Option<bool>
         (Type::Number, Type::Number) => Some(true),
         (Type::String, Type::String) => Some(true),
         (Type::Boolean, Type::Boolean) => Some(true),
-            (Type::Array(a), Type::Array(b)) => supports(&a, &b, typereg),
+        (Type::Array(a), Type::Array(b)) => supports(&a, &b, typereg),
         (Type::Table, Type::Table) => Some(a_id == b_id),
         (
             Type::Function {
@@ -188,7 +180,7 @@ pub fn supports(a_id: &TypeId, b_id: &TypeId, typereg: &TypeReg) -> Option<bool>
                 params: params_b,
                 return_type: return_b,
             },
-        ) => Some(true),
+        ) => Some(params_a == params_b && return_a == return_b),
         (Type::Type, Type::Type) => Some(true),
         (Type::Module, Type::Module) => Some(true),
         _ => Some(false),

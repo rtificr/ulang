@@ -1,14 +1,17 @@
 use crate::{
-    StringInt, TypeReg,
-    ast::{NodeId, Operator, StringId, TypeId, TypeIdent},
-    runtime::{AccessMode, EvalReason, Evaluation, Runtime, memory::ValPtr, types::Type},
+    ast::{NodeId, StringId, TypeId},
+    runtime::{
+        Evaluation, Runtime,
+        memory::{Scope, ValPtr},
+    },
 };
-use anyhow::{Result, bail};
-use std::{collections::HashMap, fmt::Display, hash::Hash};
+use ahash::AHashMap;
+use anyhow::Result;
+use std::{collections::HashMap, hash::Hash};
 
 pub type BuiltinFn = fn(&mut Runtime, Vec<Value>) -> Result<Value>;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum Value {
     Nil,
     Number(f64),
@@ -21,6 +24,7 @@ pub enum Value {
     Tuple(Vec<ValPtr>),
     Table(Table),
     Function {
+        enclosed: Scope,
         params: Vec<(StringId, TypeId)>,
         body: NodeId,
         return_type: TypeId,
@@ -29,6 +33,47 @@ pub enum Value {
     Module(StringId),
     Type(TypeId),
     Reference(ValPtr),
+}
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Number(l0), Self::Number(r0)) => l0 == r0,
+            (Self::String(l0), Self::String(r0)) => l0 == r0,
+            (Self::Boolean(l0), Self::Boolean(r0)) => l0 == r0,
+            (
+                Self::Array {
+                    of: l_of,
+                    elements: l_elements,
+                },
+                Self::Array {
+                    of: r_of,
+                    elements: r_elements,
+                },
+            ) => l_of == r_of && l_elements == r_elements,
+            (Self::Tuple(l0), Self::Tuple(r0)) => l0 == r0,
+            (Self::Table(l0), Self::Table(r0)) => l0 == r0,
+            (
+                Self::Function {
+                    enclosed: l_enclosed,
+                    params: l_params,
+                    body: l_body,
+                    return_type: l_return_type,
+                },
+                Self::Function {
+                    enclosed: r_enclosed,
+                    params: r_params,
+                    body: r_body,
+                    return_type: r_return_type,
+                },
+            ) => l_body == r_body,
+            (Self::Builtin(l0), Self::Builtin(r0)) => l0 == r0,
+            (Self::Module(l0), Self::Module(r0)) => l0 == r0,
+            (Self::Type(l0), Self::Type(r0)) => l0 == r0,
+            (Self::Reference(l0), Self::Reference(r0)) => l0 == r0,
+            (Self::Nil, Self::Nil) => true,
+            _ => core::mem::discriminant(self) == core::mem::discriminant(other),
+        }
+    }
 }
 impl Eq for Value {}
 impl Hash for Value {
@@ -54,20 +99,20 @@ pub type TableValue = ValPtr;
 pub type TableMap = HashMap<TableKey, TableValue>;
 #[derive(Debug, Clone, PartialEq)]
 pub struct Table {
-    inner: TableMap
+    inner: TableMap,
 }
 impl Table {
     pub fn new() -> Self {
         Self {
-            inner: TableMap::new()
+            inner: TableMap::new(),
         }
     }
     pub fn insert(&mut self, key: TableKey, value: TableValue) -> Option<TableValue> {
         self.inner.insert(key, value)
-    } 
+    }
     pub fn get(&self, key: &TableKey) -> Option<&TableValue> {
         self.inner.get(key)
-    } 
+    }
     pub fn inner(&self) -> &TableMap {
         &self.inner
     }

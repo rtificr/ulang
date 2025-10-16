@@ -1,5 +1,6 @@
 use crate::{
-    ast::{Literal, Node, NodeId}, NodeReg, Noder, StringInt
+    NodeReg, StringInt,
+    ast::{Literal, Node, NodeId},
 };
 
 pub fn print_expr(nodes: &NodeReg, strint: &StringInt, depth: usize, node_id: NodeId) {
@@ -26,7 +27,12 @@ pub fn print_expr(nodes: &NodeReg, strint: &StringInt, depth: usize, node_id: No
                     print_expr(nodes, strint, depth + 1, *node_id);
                     println!(")");
                 }
-                Node::Declaration { name, value, ann, export } => {
+                Node::Declaration {
+                    name,
+                    value,
+                    ann,
+                    export,
+                } => {
                     match ann {
                         Some(ann) => {
                             let ann = strint.resolve(ann.raw()).unwrap_or("unknown");
@@ -72,10 +78,12 @@ pub fn print_expr(nodes: &NodeReg, strint: &StringInt, depth: usize, node_id: No
                         let s = strint.resolve(s.raw()).unwrap();
                         println!("{}String(\"{}\")", tabs, s);
                     }
-                    Literal::FString {
-                        parts
-                    } => {
-                        let parts = parts.iter().map(|nid| nid.to_string()).collect::<Vec<_>>().join(", ");
+                    Literal::FString { parts } => {
+                        let parts = parts
+                            .iter()
+                            .map(|nid| nid.to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ");
                         println!("{}FString([{}])", tabs, parts);
                     }
                     Literal::Boolean(b) => {
@@ -102,9 +110,9 @@ pub fn print_expr(nodes: &NodeReg, strint: &StringInt, depth: usize, node_id: No
                         println!("{}Table {{", tabs);
                         for (key, value) in elements {
                             println!("{}  Key:", tabs);
-                            print_expr(nodes, strint, depth+2, *key);
+                            print_expr(nodes, strint, depth + 2, *key);
                             println!("{}  Value:", tabs);
-                            print_expr(nodes, strint, depth+2, *value);
+                            print_expr(nodes, strint, depth + 2, *value);
                         }
                         println!("{}}}", tabs);
                     }
@@ -113,8 +121,16 @@ pub fn print_expr(nodes: &NodeReg, strint: &StringInt, depth: usize, node_id: No
                     let name = strint.resolve(name.raw()).unwrap();
                     println!("{}Identifier(\"{}\")", tabs, name);
                 }
-                Node::ForExpr { init: _init, condition: _condition, update: _update, body: _body } => {}
-                Node::Assign { target, node: value } => {
+                Node::ForExpr {
+                    init: _init,
+                    condition: _condition,
+                    update: _update,
+                    body: _body,
+                } => {}
+                Node::Assign {
+                    target,
+                    node: value,
+                } => {
                     print_expr(nodes, strint, depth + 1, *target);
                     println!("{} = :", tabs);
                     print_expr(nodes, strint, depth + 1, *value);

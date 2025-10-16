@@ -1,27 +1,11 @@
-use anyhow::bail;
 use interns::Interner;
-use pest::{
-    Parser,
-    iterators::{Pair, Pairs},
-};
+use pest::Parser;
 use slab::Slab;
-use std::{
-    collections::HashMap,
-    fs::File,
-    io::{Read, stdin},
-    time::Instant,
-};
-use string_interner::{
-    StringInterner,
-    backend::{Backend, BucketBackend, BufferBackend},
-};
+use std::{collections::HashMap, fs::File, io::{stdin, Read}, time::Instant};
+use string_interner::{StringInterner, backend::BucketBackend};
 
 use crate::{
-    ast::{
-        FuncParam, Literal, Node, NodeId, NodeIdRaw, Operator, Span, SpannedNode, StringId,
-        StringIdRaw, TypeId, TypeIdRaw, TypeIdent,
-    },
-    err::ParseError,
+    ast::{SpannedNode, TypeId, TypeIdent},
     noder::Noder,
     printexpr::print_expr,
     runtime::{Runtime, types::Type},
@@ -33,7 +17,6 @@ mod module;
 mod noder;
 mod printexpr;
 mod runtime;
-mod scopes;
 mod util;
 
 #[derive(pest_derive::Parser)]
@@ -137,8 +120,8 @@ fn main() {
             return;
         }
     }
+    stdin().read(&mut [0u8]).unwrap();
 
-    // stdin().read(&mut [0u8]).unwrap();
 }
 
 pub type NodeReg = Slab<SpannedNode>;

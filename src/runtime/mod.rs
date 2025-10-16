@@ -1,21 +1,18 @@
 use anyhow::Result;
 use anyhow::*;
 use core::str;
-use pest::Parser;
-use std::collections::HashSet;
-use std::{collections::HashMap, fs::File, io::Read, ptr};
 
+use crate::runtime::memory::Scope;
 use crate::runtime::value::Table;
 use crate::util::Pipeable;
 use crate::{
-    FRAMEBUF, NodeReg, Rule, SCREEN_HEIGHT, SCREEN_WIDTH, StringInt, TypeReg, UParser, WINDOW,
-    ast::{Literal, Node, NodeId, StringId, TypeId, TypeIdent},
+    FRAMEBUF, NodeReg, SCREEN_HEIGHT, SCREEN_WIDTH, StringInt, TypeReg, WINDOW,
+    ast::{Literal, Node, NodeId, StringId, TypeId},
     runtime::{
         memory::{Memory, ValPtr},
         types::{Type, supports},
         value::{BuiltinFn, Value},
     },
-    scopes::Scopes,
 };
 
 pub mod helpers;
@@ -197,7 +194,7 @@ impl Runtime {
 
             unsafe {
                 if x < SCREEN_WIDTH && y < SCREEN_HEIGHT {
-                    let offset = (y * SCREEN_WIDTH + x);
+                    let offset = y * SCREEN_WIDTH + x;
                     FRAMEBUF[offset] = r | g << 8 | b << 16;
                 }
             }
@@ -381,8 +378,7 @@ impl Runtime {
                     let val = self.memory.err_get(ptr)?.clone();
                     bail!(
                         "Field access is not supported for {}",
-                        self.get_val_typeid(val)?
-                            .pipe(|t| self.resolve_typename(t))
+                        self.get_val_typeid(val)?.pipe(|t| self.resolve_typename(t))
                     )
                 }
                 Node::IfExpr {
@@ -421,8 +417,18 @@ impl Runtime {
                     }
                     Evaluation::new(ret)
                 }
-                Node::ForExpr { init: _init, condition: _condition, update: _update, body: _body } => todo!(),
-                Node::Declaration { name, ann, value, export: _export } => {
+                Node::ForExpr {
+                    init: _init,
+                    condition: _condition,
+                    update: _update,
+                    body: _body,
+                } => todo!(),
+                Node::Declaration {
+                    name,
+                    ann,
+                    value,
+                    export: _export,
+                } => {
                     let eval = if let Some(value) = value {
                         self.eval(*value)?
                     } else {
@@ -453,11 +459,11 @@ impl Runtime {
                         .pipe(|p| self.memory.err_get(p))?
                         .clone();
 
-                    let mut_val = self
-                        .memory
-                        .get_mut(targ)
-                        .ok_or(anyhow!("Couldn't find value attributed to pointer {}", targ))?;
-                    
+                    let mut_val = self.memory.get_mut(targ).ok_or(anyhow!(
+                        "Couldn't find value attributed to pointer {}",
+                        targ
+                    ))?;
+
                     match mut_val {
                         Value::Reference(ptr) => {
                             let ptr = ptr.clone();
@@ -482,6 +488,7 @@ impl Runtime {
                     }
                     let return_type = self.alloc_type(&Type::Any);
                     let func = Value::Function {
+                        enclosed: Scope::from_collapsed(&self.memory.scope_stack),
                         params: fn_params,
                         body: *body,
                         return_type,
@@ -506,7 +513,12 @@ impl Runtime {
                             let result = f(self, evaluated_args)?;
                             self.malloc(result).into()
                         }
-                        Value::Function { params, body, .. } => {
+                        Value::Function {
+                            params,
+                            body,
+                            enclosed,
+                            ..
+                        } => {
                             if params.len() != args.len() {
                                 bail!(
                                     "Function expected {} arguments, got {}",
@@ -516,7 +528,7 @@ impl Runtime {
                             }
 
                             // New function-local scope
-                            self.memory.push_scope();
+                            self.memory.push_exclusive_scope(enclosed);
 
                             // Bind parameters respecting declared types. If a parameter's
                             // declared type is a Reference(T), the argument must be a
@@ -599,7 +611,7 @@ impl Runtime {
 
                             // If body returned early, convert to a plain Evaluation
                             if result.did_return() {
-                                Evaluation::new(result.val_ptr)
+                                Evaluation::new(result.val_ptr).with_reason(EvalReason::Return)
                             } else {
                                 Evaluation::new(result.val_ptr)
                             }
@@ -621,8 +633,8 @@ impl Runtime {
                     let l = self.eval(*left)?;
                     let lptr = self.collapse_eval(&l)?;
                     let lval = self.memory.err_get(lptr)?.clone();
-                    let rval = self.eval(*right)?;
-                    let rptr = self.collapse_eval(&rval)?;
+                    let r = self.eval(*right)?;
+                    let rptr = self.collapse_eval(&r)?;
                     let rval = self.memory.err_get(rptr)?.clone();
                     let out = self.operate(&lval, &rval, op)?;
                     self.malloc(out).into()
@@ -657,7 +669,9 @@ impl Runtime {
                             Evaluation::new(self.refify(elem_ptr))
                         }
                         Value::Table(table) => {
-                            let ptr = *table.get(&idx_val_clone).unwrap_or(&self.memory.malloc(Value::Nil));
+                            let ptr = *table
+                                .get(&idx_val_clone)
+                                .unwrap_or(&self.memory.malloc(Value::Nil));
                             Evaluation::new(self.refify(ptr))
                         }
                         _ => bail!(

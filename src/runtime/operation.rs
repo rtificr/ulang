@@ -1,6 +1,6 @@
 use crate::{
     ast::Operator,
-    runtime::{types::supports, value::Value, Runtime},
+    runtime::{Runtime, types::supports, value::Value},
 };
 use anyhow::*;
 impl Runtime {
@@ -22,9 +22,7 @@ impl Runtime {
                 } else {
                     0
                 };
-                let a = self.resolve_str(*a)
-                    .unwrap()
-                    .repeat(n);
+                let a = self.resolve_str(*a).unwrap().repeat(n);
 
                 Ok(Value::String(self.intern_str(&a)))
             }
@@ -55,10 +53,7 @@ impl Runtime {
             },
             (Value::String(a), Value::String(b)) => match op {
                 Operator::Add => {
-                    let (a, b) = (
-                        self.resolve_str(*a).unwrap(),
-                        self.resolve_str(*b).unwrap(),
-                    );
+                    let (a, b) = (self.resolve_str(*a).unwrap(), self.resolve_str(*b).unwrap());
                     let merged = self.intern_str(&format!("{}{}", a, b));
                     Ok(Value::String(merged))
                 }
@@ -82,7 +77,11 @@ impl Runtime {
             (Value::Array { of, elements }, b) if *op == Operator::Add => {
                 let b_ty = self.get_val_typeid(b.clone())?;
                 if !supports(of, &b_ty, &self.typereg).ok_or(anyhow!("Missing types"))? {
-                    bail!("Cannot add array of type {:?} with value of type {:?}", of, b_ty);
+                    bail!(
+                        "Cannot add array of type {:?} with value of type {:?}",
+                        of,
+                        b_ty
+                    );
                 }
                 let mut new_elements = elements.clone();
                 new_elements.push(self.malloc(b.clone()));
@@ -91,7 +90,13 @@ impl Runtime {
                     elements: new_elements,
                 })
             }
-            (Value::Array { of, elements }, Value::Array { of: of2, elements: elements2 }) => match op {
+            (
+                Value::Array { of, elements },
+                Value::Array {
+                    of: of2,
+                    elements: elements2,
+                },
+            ) => match op {
                 Operator::Add => {
                     if of != of2 {
                         bail!("Cannot add arrays of different types");
@@ -131,7 +136,11 @@ impl Runtime {
                 }
                 _ => bail!("Unsupported operator {:?} for arrays", op),
             },
-            _ => bail!("Type mismatch for operation: {} and {}", self.value_to_string(lhs)?, self.value_to_string(rhs)?),
+            _ => bail!(
+                "Type mismatch for operation: {} and {}",
+                self.value_to_string(lhs)?,
+                self.value_to_string(rhs)?
+            ),
         }
     }
     pub fn unary_operate(&self, value: &Value, op: &crate::ast::Operator) -> Result<Value> {
