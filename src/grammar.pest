@@ -73,8 +73,9 @@ identifier = @{
     !(let | if | else | while | break | fn | return | import | true | false | nil) ~ !("f" ~ "\"") ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")*
 }
 
-literal =  { number | boolean | nil | fstring | string | table | array | tuple }
-table   =  { "{" ~ ("[" ~ expr ~ "]" ~ "=" ~ expr) ~ (","? ~ "[" ~ expr ~ "]" ~ "=" ~ expr)* ~ ","? ~ "}" }
+literal =  { number | boolean | nil | fstring | string | table | object | array | tuple }
+table   =  { "#{" ~ ("[" ~ expr ~ "]" ~ "=" ~ expr) ~ (","? ~ "[" ~ expr ~ "]" ~ "=" ~ expr)* ~ ","? ~ "}" }
+object  =  { "{" ~ (identifier ~ "=" ~ expr) ~ (","? ~ identifier ~ "=" ~ expr)* ~ ","? ~ "}" }
 boolean =  { true | false }
 number  =  { hex | binary | octal | decimal }
 hex     = @{ "0x" ~ ASCII_HEX_DIGIT+ }

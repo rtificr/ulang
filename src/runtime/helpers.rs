@@ -16,7 +16,7 @@ impl Runtime {
     pub fn alloc_type(&mut self, ty: &Type) -> TypeId {
         TypeId::from_raw(self.typereg.get_or_intern(ty))
     }
-    pub fn resolve_typename(&self, id: TypeId) -> String {
+    pub fn resolve_type_str(&self, id: TypeId) -> String {
         if let Some(ty) = self.resolve_type(id) {
             ty.to_string(&self.strint, &self.typereg)
         } else {

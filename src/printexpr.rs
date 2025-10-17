@@ -116,6 +116,15 @@ pub fn print_expr(nodes: &NodeReg, strint: &StringInt, depth: usize, node_id: No
                         }
                         println!("{}}}", tabs);
                     }
+                    Literal::Object { elements } => {
+                        println!("{}Object {{", tabs);
+                        for (key, value) in elements {
+                            println!("{}  Key: {}", tabs, strint.resolve(key.0).unwrap_or("unknown"));
+                            println!("{}  Value:", tabs);
+                            print_expr(nodes, strint, depth + 2, *value);
+                        }
+                        println!("{}}}", tabs);
+                    }
                 },
                 Node::Identifier(name) => {
                     let name = strint.resolve(name.raw()).unwrap();
@@ -138,8 +147,11 @@ pub fn print_expr(nodes: &NodeReg, strint: &StringInt, depth: usize, node_id: No
                 Node::Function { params, body } => {
                     println!("{}Function(", tabs);
                     for param in params {
-                        let node = param.type_;
-                        print_expr(nodes, strint, depth + 1, node);
+                        let type_node = param.type_;
+                        match type_node {
+                            Some(node) => print_expr(nodes, strint, depth + 1, node),
+                            None => println!("{}{} any", tabs, tab)
+                        }
                     }
                     println!("{tabs}) {{");
                     print_expr(nodes, strint, depth + 1, *body);

@@ -11,6 +11,7 @@ pub enum Type {
     Union(Vec<TypeId>),
     Array(TypeId),
     Table,
+    Object,
     Function {
         params: Vec<TypeId>,
         return_type: TypeId,
@@ -65,6 +66,7 @@ impl Type {
                     .to_string(strint, typereg)
             ),
             Type::Table => "table".to_string(),
+            Type::Object => "object".to_string(),
             Type::Function {
                 params,
                 return_type,

@@ -361,6 +361,14 @@ impl Runtime {
                         }
                         self.malloc(Value::Table(table))
                     }
+                    Literal::Object { elements } => {
+                        let mut table = Table::new();
+                        for (key, value) in elements {
+                            let value = self.eval(*value)?.val_ptr;
+                            table.insert(*key, value);
+                        }
+                        self.malloc(Value::Object(table))
+                    }
                 }
                 .into(),
                 Node::Identifier(ident) => self
@@ -371,16 +379,6 @@ impl Runtime {
                         self.resolve_str(*ident).unwrap()
                     ))?
                     .into(),
-                Node::FieldAccess { object, .. } => {
-                    // Field access read semantics not implemented yet; produce an error
-                    let eval = self.eval(*object)?;
-                    let ptr = self.collapse_eval(&eval)?;
-                    let val = self.memory.err_get(ptr)?.clone();
-                    bail!(
-                        "Field access is not supported for {}",
-                        self.get_val_typeid(val)?.pipe(|t| self.resolve_typename(t))
-                    )
-                }
                 Node::IfExpr {
                     condition,
                     then_branch,
@@ -478,12 +476,17 @@ impl Runtime {
                     // Build function value with resolved parameter types. Return type defaults to Any.
                     let mut fn_params: Vec<(StringId, TypeId)> = Vec::with_capacity(params.len());
                     for p in params.iter() {
-                        let ty_val = self
-                            .eval(p.type_)?
-                            .val_ptr
-                            .pipe(|p| self.memory.err_get(p))?
-                            .clone();
-                        let ty_id = self.interpret_as_type_literal(&ty_val)?;
+                        let ty_id = match p.type_ {
+                            Some(type_node) => {
+                                let ty_val = self
+                                    .eval(type_node)?
+                                    .val_ptr
+                                    .pipe(|p| self.memory.err_get(p))?
+                                    .clone();
+                                self.interpret_as_type_literal(&ty_val)?
+                            }
+                            None => self.alloc_type(&Type::Any),
+                        };
                         fn_params.push((p.name, ty_id));
                     }
                     let return_type = self.alloc_type(&Type::Any);
@@ -568,7 +571,7 @@ impl Runtime {
                                         bail!(
                                             "Parameter '{}' expects a reference type {}, but argument is not a reference",
                                             self.resolve_str(*name).unwrap_or("<param>"),
-                                            self.resolve_typename(*expected_ty)
+                                            self.resolve_type_str(*expected_ty)
                                         );
                                     }
                                 } else {
@@ -583,11 +586,11 @@ impl Runtime {
                                             let inner_type =
                                                 self.get_val_typeid(inner_val_clone)?;
                                             let found_typename =
-                                                format!("&{}", self.resolve_typename(inner_type));
+                                                format!("&{}", self.resolve_type_str(inner_type));
                                             bail!(
                                                 "Parameter '{}' expects {}, but argument is {}",
                                                 self.resolve_str(*name).unwrap_or("<param>"),
-                                                self.resolve_typename(*expected_ty),
+                                                self.resolve_type_str(*expected_ty),
                                                 found_typename
                                             );
                                         }
@@ -677,8 +680,29 @@ impl Runtime {
                         _ => bail!(
                             "Indexing is not supported for {}",
                             self.get_val_typeid(base_val_clone)?
-                                .pipe(|t| self.resolve_typename(t))
+                                .pipe(|t| self.resolve_type_str(t))
                         ),
+                    }
+                }
+                Node::FieldAccess { object, field } => {
+                    let eval = self.eval(*object)?;
+                    let ptr = self.collapse_eval(&eval)?;
+                    let val = self.memory.err_get(ptr)?.clone();
+
+                    match val {
+                        Value::Object(object) => {
+                            let ptr = object.get(field).ok_or(anyhow!(
+                                "Object has no key '{}'",
+                                self.resolve_str(*field).unwrap_or("unknown")
+                            ))?;
+
+                            Evaluation::new(self.refify(*ptr))
+                        }
+                        _ => {
+                            let type_id = self.get_val_typeid(val)?;
+                            let typename = self.resolve_type_str(type_id);
+                            bail!("{typename} does not support field access",)
+                        }
                     }
                 }
                 Node::Reference(node) => {
@@ -730,7 +754,7 @@ impl Runtime {
         })
     }
     pub fn type_assert(&mut self, found: &TypeId, expected: &TypeId) -> anyhow::Result<()> {
-        if !supports(found, expected, &self.typereg).unwrap_or(false) {
+        if !supports(expected, found, &self.typereg).unwrap_or(false) {
             bail!(
                 "Type assertion failed: expected {:?}, found {:?}",
                 self.typereg.resolve(expected.raw()),

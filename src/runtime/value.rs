@@ -22,7 +22,8 @@ pub enum Value {
         elements: Vec<ValPtr>,
     },
     Tuple(Vec<ValPtr>),
-    Table(Table),
+    Table(Table<Value, ValPtr>),
+    Object(Table<StringId, ValPtr>),
     Function {
         enclosed: Scope,
         params: Vec<(StringId, TypeId)>,
@@ -94,26 +95,29 @@ impl Value {
     }
 }
 
-pub type TableKey = Value;
-pub type TableValue = ValPtr;
-pub type TableMap = HashMap<TableKey, TableValue>;
+pub type FastMap<K, V> = AHashMap<K, V>;
+
 #[derive(Debug, Clone, PartialEq)]
-pub struct Table {
-    inner: TableMap,
+pub struct Table<K, V>
+where K: Hash + Eq
+{
+    inner: FastMap<K, V>,
 }
-impl Table {
+impl<K, V> Table<K, V>
+where K: Hash + Eq
+{
     pub fn new() -> Self {
         Self {
-            inner: TableMap::new(),
+            inner: FastMap::new(),
         }
     }
-    pub fn insert(&mut self, key: TableKey, value: TableValue) -> Option<TableValue> {
+    pub fn insert(&mut self, key: K, value: V) -> Option<V> {
         self.inner.insert(key, value)
     }
-    pub fn get(&self, key: &TableKey) -> Option<&TableValue> {
+    pub fn get(&self, key: &K) -> Option<&V> {
         self.inner.get(key)
     }
-    pub fn inner(&self) -> &TableMap {
+    pub fn inner(&self) -> &FastMap<K, V> {
         &self.inner
     }
 }

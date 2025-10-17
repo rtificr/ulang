@@ -56,15 +56,15 @@ impl Span {
     pub fn new(start: usize, end: usize) -> Self {
         Self { start, end }
     }
-    
+
     pub fn len(&self) -> usize {
         self.end - self.start
     }
-    
+
     pub fn is_empty(&self) -> bool {
         self.start >= self.end
     }
-    
+
     /// Combine two spans to create a span that covers both
     pub fn merge(&self, other: &Span) -> Span {
         Span {
@@ -85,7 +85,7 @@ impl SpannedNode {
     pub fn new(node: Node, span: Span) -> Self {
         Self { node, span }
     }
-    
+
     /// Delegate to the underlying node's as_identifier method
     pub fn as_identifier(&self) -> Option<StringId> {
         self.node.as_identifier()
@@ -131,7 +131,7 @@ impl Node {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FuncParam {
     pub name: StringId,
-    pub type_: NodeId,
+    pub type_: Option<NodeId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -199,5 +199,8 @@ pub enum Literal {
     Tuple { elements: Vec<NodeId> },
     Table {
         elements: Vec<(NodeId, NodeId)>
+    },
+    Object {
+        elements: Vec<(StringId, NodeId)>
     }
 }

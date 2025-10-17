@@ -36,6 +36,7 @@ macro_rules! impl_ptr_helpers {
         }
     };
 }
+
 impl_ptr_helpers!(ValPtr, slotmap::DefaultKey);
 
 pub struct Memory {

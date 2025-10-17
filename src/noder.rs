@@ -208,12 +208,9 @@ impl Noder {
                         let mut param_inner = param_pair.into_inner();
                         let name = param_inner.next().unwrap().as_str();
                         let type_node = if let Some(type_ann_pair) = param_inner.next() {
-                            self.handle_pair(type_ann_pair)?.ok_or(anyhow!("No type annotation for function declaration"))?
+                            Some(self.handle_pair(type_ann_pair)?.ok_or(anyhow!("No type annotation for function declaration"))?)
                         } else {
-                            return Err(ParseError::MissingTypeAnnotation {
-                                ident: name.to_string(),
-                            }
-                            .into());
+                            None
                         };
                         params_vec.push(FuncParam {
                             name: crate::ast::StringId::from_raw(self.strint.get_or_intern(name)),
@@ -907,7 +904,7 @@ impl Noder {
                 let elements: Vec<NodeId> = elements.into_iter()
                     .map(|r| r.unwrap().unwrap())
                     .collect();
-                    
+
                 let mut windows = Vec::new();
                 for chunk in elements.chunks(2) {
                     if chunk.len() == 2 {
@@ -918,8 +915,29 @@ impl Noder {
                         bail!("Table element chunk does not have exactly 2 elements");
                     }
                 }
-                
+
                 let node = Node::Literal(Literal::Table { elements: windows });
+                Some(self.insert_spanned_node(node, span))
+            }
+            Rule::object => {
+                let inner = pair.into_inner();
+                let elements: Vec<anyhow::Result<_>> = inner.into_iter().map(|p| self.handle_pair(p)).collect();
+                let elements: Vec<NodeId> = elements.into_iter()
+                    .map(|r| r.unwrap().unwrap())
+                    .collect();
+
+                let mut windows = Vec::new();
+                for chunk in elements.chunks(2) {
+                    if chunk.len() == 2 {
+                        let key = self.force_ident(chunk[0])?;
+                        let value = chunk[1].clone();
+                        windows.push((key, value));
+                    } else {
+                        bail!("Object element chunk does not have exactly 2 elements");
+                    }
+                }
+
+                let node = Node::Literal(Literal::Object { elements: windows });
                 Some(self.insert_spanned_node(node, span))
             }
             Rule::call_suffix | Rule::index_suffix | Rule::field_suffix => None,
@@ -1052,7 +1070,15 @@ impl Noder {
 
         Ok(parts)
     }
-
+    pub fn force_ident(&self, node_id: NodeId) -> anyhow::Result<StringId> {
+        match self.nodes.get(node_id.0) {
+            Some(n) => match &n.node {
+                Node::Identifier(id) => Ok(id.clone()),
+                _ => bail!("Expected identifier node"),
+            },
+            None => bail!("Missing node"),
+        }
+    }
     pub fn finish(self) -> (NodeReg, StringInt, TypeReg) {
         (self.nodes, self.strint, self.types)
     }

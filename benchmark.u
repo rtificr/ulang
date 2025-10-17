@@ -2,19 +2,20 @@ let makeState = fn() {
     let v = 0
 
     {
-        ["next"] = fn() {
+        next = fn() {
             v = v + 1
             v
         },
-        ["get"] = fn() v,
-        ["ref"] = fn() &v
+        inc = fn(x) {
+            v = v + x
+            v
+        },
+        get = v,
+        ref = &v
     }
 }
 
-let goon = fn(x: number) x**2
-let state = makeState()
-let state2 = makeState()
-print(state["next"]())
-print(state2["next"]())
-print(state["get"]())
-print(state2["get"]())
+let s = makeState()
+
+print(s.inc(5))
+print(s.get)

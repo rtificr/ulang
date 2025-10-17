@@ -24,6 +24,7 @@ impl Runtime {
             ),
             Value::Array { of, .. } => Type::Array(of),
             Value::Table(_) => Type::Table,
+            Value::Object(_) => Type::Object,
             Value::Function {
                 params,
                 return_type,
@@ -87,6 +88,20 @@ impl Runtime {
                     .collect::<Result<Vec<_>>>()?
                     .join(", ")
             ),
+            Value::Object(map) => format!(
+                "{{{}}}",
+                map.inner()
+                    .iter()
+                    .map(|(k, v)| {
+                        Ok(format!(
+                            "{}: {}",
+                            self.resolve_str(*k).unwrap_or("unknown"),
+                            self.value_to_string(self.memory.err_get(*v)?)?
+                        ))
+                    })
+                    .collect::<Result<Vec<_>>>()?
+                    .join(", ")
+            ),
             Value::Function {
                 enclosed,
                 params,
@@ -120,7 +135,7 @@ impl Runtime {
                     self.resolve_str(*path_id).unwrap_or("unknown")
                 )
             }
-            Value::Type(type_id) => format!("<type {:?}>", self.resolve_typename(*type_id)),
+            Value::Type(type_id) => format!("<type {:?}>", self.resolve_type_str(*type_id)),
             Value::Reference(value_id) => format!("<& {:?}>", self.resolve_value_str(*value_id)),
         })
     }
