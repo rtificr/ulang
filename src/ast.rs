@@ -111,9 +111,12 @@ pub enum Node {
     Function { params: Vec<FuncParam>, body: NodeId },
     FunctionCall { node: NodeId, args: Vec<NodeId> },
     UnaryOp { op: Operator, expr: NodeId },
+    OpAssign { left: NodeId, op: Operator, right: NodeId },
     BinaryOp { left: NodeId, op: Operator, right: NodeId },
     Block { statements: Vec<NodeId> },
     IndexAccess { base: NodeId, index: NodeId },
+    Inc(NodeId),
+    Dec(NodeId),
     Reference(NodeId),
     Return(Option<NodeId>),
     Break(Option<NodeId>),
@@ -140,8 +143,13 @@ pub struct TypeIdent {
     pub dims: u8,
 }
 
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Operator {
+    PreInc,
+    PreDec,
+    PostInc,
+    PostDec,
     Add,
     Subtract,
     Multiply,
@@ -160,6 +168,15 @@ pub enum Operator {
     BitOr,
     BitXor,
     Exponent,
+    // Compound assignment operators
+    AddAssign,
+    SubAssign,
+    MulAssign,
+    DivAssign,
+    ModAssign,
+    BitAndAssign,
+    BitOrAssign,
+    BitXorAssign,
 }
 impl Display for Operator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -182,6 +199,16 @@ impl Display for Operator {
             Operator::BitOr => "|",
             Operator::BitXor => "^",
             Operator::Exponent => "**",
+            Operator::PreInc | Operator::PostInc => "++",
+            Operator::PreDec | Operator::PostDec => "--",
+            Operator::AddAssign => "+=",
+            Operator::SubAssign => "-=",
+            Operator::MulAssign => "*=",
+            Operator::DivAssign => "/=",
+            Operator::ModAssign => "%=",
+            Operator::BitAndAssign => "&=",
+            Operator::BitOrAssign => "|=",
+            Operator::BitXorAssign => "^=",
         };
         write!(f, "{}", op_str)
     }

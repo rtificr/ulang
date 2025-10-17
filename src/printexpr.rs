@@ -177,6 +177,12 @@ pub fn print_expr(nodes: &NodeReg, strint: &StringInt, depth: usize, node_id: No
                     print_expr(nodes, strint, depth + 1, *left);
                     print_expr(nodes, strint, depth + 1, *right);
                 }
+                Node::OpAssign { left, op, right } => {
+                    let op_str = op.to_string();
+                    println!("{}OpAssign({})", tabs, op_str);
+                    print_expr(nodes, strint, depth + 1, *left);
+                    print_expr(nodes, strint, depth + 1, *right);
+                }
                 Node::Block { statements } => {
                     println!("{}Block {{", tabs);
                     for stmt in statements {
@@ -202,6 +208,14 @@ pub fn print_expr(nodes: &NodeReg, strint: &StringInt, depth: usize, node_id: No
                     if let Some(expr) = expr {
                         print_expr(nodes, strint, depth + 1, *expr);
                     }
+                }
+                Node::Inc(node_id) => {
+                    println!("{}Inc", tabs);
+                    print_expr(nodes, strint, depth + 1, *node_id);
+                }
+                Node::Dec(node_id) => {
+                    println!("{}Dec", tabs);
+                    print_expr(nodes, strint, depth + 1, *node_id);
                 }
             }
         }

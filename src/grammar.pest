@@ -16,7 +16,7 @@ expr = {
   | logical_or
   | literal
   | reference_expr
-  | block_expr) ~ ";"?
+  | block_expr) ~ ";"*
 }
 
 reference_expr       = { "&" ~ expr }
@@ -27,7 +27,7 @@ export_let_annotated = { "export" ~ let ~ identifier ~ type_annotation ~ "=" ~ e
 if_expr              = { if ~ expr ~ expr ~ (else ~ (if_expr | expr))? }
 while_expr           = { while ~ expr ~ expr }
 function_expr        = { fn ~ "(" ~ parameter_list? ~ ")" ~ type_annotation? ~ expr }
-return_expr          = { return ~ expr? }
+return_expr          = { "return" ~ expr? }
 break_expr           = { break ~ expr? }
 block_expr           = { "{" ~ expr* ~ "}" }
 import_expr          = { import ~ string }
@@ -35,7 +35,18 @@ import_expr          = { import ~ string }
 parameter_list = { parameter ~ ("," ~ parameter)* }
 parameter      = { identifier ~ type_annotation? }
 
-assignment     = { postfix ~ "=" ~ expr }
+assignment     = { postfix ~ assign_op ~ expr }
+assign_op      = { add_assign | sub_assign | mul_assign | div_assign | mod_assign | 
+                   bitand_assign | bitor_assign | bitxor_assign | simple_assign }
+simple_assign  = { "=" }
+add_assign     = { "+=" }
+sub_assign     = { "-=" }
+mul_assign     = { "*=" }
+div_assign     = { "/=" }
+mod_assign     = { "%=" }
+bitand_assign  = { "&=" }
+bitor_assign   = { "|=" }
+bitxor_assign  = { "^=" }
 logical_or     = { logical_and ~ ("||" ~ logical_and)* }
 logical_and    = { bitwise_or ~ ("&&" ~ bitwise_or)* }
 bitwise_or     = { bitwise_xor ~ ("|" ~ bitwise_xor)* }
@@ -46,8 +57,11 @@ additive       = { multiplicative ~ (("+" | "-") ~ multiplicative)* }
 multiplicative = { exponent ~ (("*" | "/" | "%") ~ exponent)* }
 exponent       = { unary ~ ("**" ~ unary)* }
 
-unary           = { negate | not | postfix }
-postfix         = { primary ~ (call_suffix | index_suffix | field_suffix)* }
+unary           = { postfix | negate | not }
+postfix         = { (prefix | primary) ~ (call_suffix | index_suffix | field_suffix | inc | dec)* }
+prefix          = { (inc | dec) ~ primary }
+inc             = @{ "++" }
+dec             = @{ "--" }
 call_suffix     = { "(" ~ (expr ~ ("," ~ expr)*)? ~ ")" }
 index_suffix    = { "[" ~ expr ~ "]" }
 field_suffix    = { "." ~ identifier }

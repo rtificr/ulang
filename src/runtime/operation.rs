@@ -33,6 +33,12 @@ impl Runtime {
                     self.resolve_str(*b).unwrap(),
                 ))))
             }
+            (Value::Number(a), Value::Number(b)) if matches!(op, Operator::PreInc | Operator::PostInc) => {
+                Ok(Value::Number(a + b))
+            }
+            (Value::Number(a), Value::Number(b)) if matches!(op, Operator::PreDec | Operator::PostDec) => {
+                Ok(Value::Number(a - b))
+            }
             (Value::Number(a), Value::Number(b)) => match op {
                 Operator::Add => Ok(Value::Number(a + b)),
                 Operator::Subtract => Ok(Value::Number(a - b)),
@@ -147,6 +153,10 @@ impl Runtime {
         match (value, op) {
             (Value::Number(n), Operator::Subtract) => Ok(Value::Number(-n)),
             (Value::Boolean(b), Operator::Not) => Ok(Value::Boolean(!b)),
+            (Value::Number(n), Operator::PreInc) => Ok(Value::Number(n + 1.0)),
+            (Value::Number(n), Operator::PreDec) => Ok(Value::Number(n - 1.0)),
+            (Value::Number(n), Operator::PostInc) => Ok(Value::Number(n + 1.0)),
+            (Value::Number(n), Operator::PostDec) => Ok(Value::Number(n - 1.0)),
             _ => bail!("Unsupported unary operation {:?} on {:?}", op, value),
         }
     }

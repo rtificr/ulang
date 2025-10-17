@@ -1,21 +1,19 @@
 let makeState = fn() {
     let v = 0
 
-    {
-        next = fn() {
-            v = v + 1
-            v
-        },
+    return {
+        next = fn() return ++v
         inc = fn(x) {
             v = v + x
-            v
-        },
-        get = v,
+            return v
+        }
+        get = v
         ref = &v
     }
 }
 
 let s = makeState()
 
+print(s.next())
 print(s.inc(5))
 print(s.get)

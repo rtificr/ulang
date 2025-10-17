@@ -23,8 +23,8 @@ mod util;
 #[grammar = "grammar.pest"]
 pub struct UParser;
 
-const SCREEN_WIDTH: usize = 500;
-const SCREEN_HEIGHT: usize = 500;
+const SCREEN_WIDTH: usize = 200;
+const SCREEN_HEIGHT: usize = 200;
 static mut FRAMEBUF: &'static mut [u32] = &mut [0; SCREEN_WIDTH * SCREEN_HEIGHT];
 static mut WINDOW: Option<minifb::Window> = None;
 fn main() {

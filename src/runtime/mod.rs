@@ -7,7 +7,7 @@ use crate::runtime::value::Table;
 use crate::util::Pipeable;
 use crate::{
     FRAMEBUF, NodeReg, SCREEN_HEIGHT, SCREEN_WIDTH, StringInt, TypeReg, WINDOW,
-    ast::{Literal, Node, NodeId, StringId, TypeId},
+    ast::{Literal, Node, NodeId, StringId, TypeId, Operator},
     runtime::{
         memory::{Memory, ValPtr},
         types::{Type, supports},
@@ -15,6 +15,7 @@ use crate::{
     },
 };
 
+pub mod assign;
 pub mod helpers;
 pub mod memory;
 pub mod operation;
@@ -306,10 +307,22 @@ impl Runtime {
         self.depth += 1;
         let r = match node {
             Some(node) => match &node.node {
+                Node::Inc(_) => {
+                    // This shouldn't be reached since we use OpAssign for increment
+                    bail!("Unexpected Inc node - should use OpAssign")
+                }
+                Node::Dec(_) => {
+                    // This shouldn't be reached since we use OpAssign for decrement
+                    bail!("Unexpected Dec node - should use OpAssign")
+                }
                 Node::Block { statements } => {
                     let mut ret = self.memory.malloc(Value::Nil);
                     for id in statements {
-                        ret = self.eval(*id)?.val_ptr;
+                        let val = self.eval(*id)?;
+                        if val.did_return() {
+                            ret = val.val_ptr;
+                            break;
+                        }
                     }
                     Evaluation::new(ret)
                 }
@@ -448,29 +461,10 @@ impl Runtime {
                     Evaluation::new(val_ptr)
                 }
                 Node::Assign { target, node } => {
-                    let targ = self.eval(*target)?;
-                    let targ = self.refify(self.collapse_ptr(targ.val_ptr)?);
-
-                    let val = self
-                        .eval(*node)?
-                        .val_ptr
-                        .pipe(|p| self.memory.err_get(p))?
-                        .clone();
-
-                    let mut_val = self.memory.get_mut(targ).ok_or(anyhow!(
-                        "Couldn't find value attributed to pointer {}",
-                        targ
-                    ))?;
-
-                    match mut_val {
-                        Value::Reference(ptr) => {
-                            let ptr = ptr.clone();
-                            *self.memory.err_get_mut(ptr)? = val
-                        }
-                        _ => *mut_val = val,
-                    }
-
-                    Evaluation::new(self.malloc(Value::Nil))
+                    let target = self.eval(*target)?;
+                    let target = self.refify(self.collapse_ptr(target.val_ptr)?);
+                    let val = self.eval(*node)?.val_ptr;
+                    self.assign(&target, &val)?
                 }
                 Node::Function { params, body } => {
                     // Build function value with resolved parameter types. Return type defaults to Any.
@@ -636,11 +630,73 @@ impl Runtime {
                     let l = self.eval(*left)?;
                     let lptr = self.collapse_eval(&l)?;
                     let lval = self.memory.err_get(lptr)?.clone();
+
                     let r = self.eval(*right)?;
                     let rptr = self.collapse_eval(&r)?;
                     let rval = self.memory.err_get(rptr)?.clone();
+
                     let out = self.operate(&lval, &rval, op)?;
                     self.malloc(out).into()
+                }
+                Node::OpAssign { left, op, right } => {
+                    match op {
+                        Operator::PreInc | Operator::PreDec => {
+                            // Pre-increment/decrement: modify first, return new value
+                            let l = self.eval(*left)?;
+                            let lptr = self.collapse_eval(&l)?;
+                            let r = self.eval(*right)?;
+                            let rptr = self.collapse_eval(&r)?;
+
+                            let eval = self.bin_op(&lptr, op, &rptr)?;
+                            self.assign(&lptr, &eval.val_ptr)?;
+                            eval
+                        }
+                        Operator::PostInc | Operator::PostDec => {
+                            // Post-increment/decrement: return old value, then modify
+                            let l = self.eval(*left)?;
+                            let lptr = self.collapse_eval(&l)?;
+                            let old_value = self.memory.err_get(lptr)?.clone();
+
+                            let r = self.eval(*right)?;
+                            let rptr = self.collapse_eval(&r)?;
+
+                            let eval = self.bin_op(&lptr, op, &rptr)?;
+                            self.assign(&lptr, &eval.val_ptr)?;
+
+                            // Return the old value
+                            Evaluation::new(self.malloc(old_value))
+                        }
+                        Operator::AddAssign | Operator::SubAssign | Operator::MulAssign | 
+                        Operator::DivAssign | Operator::ModAssign | Operator::BitAndAssign |
+                        Operator::BitOrAssign | Operator::BitXorAssign => {
+                            // Compound assignment: x += y becomes x = x + y
+                            let l = self.eval(*left)?;
+                            let lptr = self.collapse_eval(&l)?;
+
+                            let r = self.eval(*right)?;
+                            let rptr = self.collapse_eval(&r)?;
+
+                            // Map compound assignment operator to corresponding binary operator
+                            let binary_op = match op {
+                                Operator::AddAssign => Operator::Add,
+                                Operator::SubAssign => Operator::Subtract,
+                                Operator::MulAssign => Operator::Multiply,
+                                Operator::DivAssign => Operator::Divide,
+                                Operator::ModAssign => Operator::Modulus,
+                                Operator::BitAndAssign => Operator::BitAnd,
+                                Operator::BitOrAssign => Operator::BitOr,
+                                Operator::BitXorAssign => Operator::BitXor,
+                                _ => unreachable!(),
+                            };
+
+                            let eval = self.bin_op(&lptr, &binary_op, &rptr)?;
+                            self.assign(&lptr, &eval.val_ptr)?;
+                            eval
+                        }
+                        _ => {
+                            bail!("Unsupported operator {:?} in OpAssign", op)
+                        }
+                    }
                 }
                 Node::IndexAccess { base, index } => {
                     let b = self.eval(*base)?;
@@ -729,6 +785,7 @@ impl Runtime {
                             .with_reason(EvalReason::Break)
                     }
                 }
+
             },
             None => bail!("Node ID {:?} not found", node_id),
         };

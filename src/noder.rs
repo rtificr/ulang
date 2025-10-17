@@ -281,11 +281,40 @@ impl Noder {
                             };
                             self.insert_spanned_node(node, span)
                         }
+                        Rule::inc => {
+                            let one = Node::Literal(Literal::Number(1.0));
+                            let one_id = self.insert_spanned_node(one, span);
+                            let node = Node::OpAssign { left: base_expr, op: Operator::PostInc, right: one_id };
+                            self.insert_spanned_node(node, span)
+                        }
+                        Rule::dec => {
+                            let one = Node::Literal(Literal::Number(1.0));
+                            let one_id = self.insert_spanned_node(one, span);
+                            let node = Node::OpAssign { left: base_expr, op: Operator::PostDec, right: one_id };
+                            self.insert_spanned_node(node, span)
+                        }
                         _ => bail!("Unexpected postfix operation: {:?}", suffix_pair.as_rule()),
                     };
                 }
 
                 Some(base_expr)
+            }
+            Rule::prefix => {
+                let mut inner_rules = pair.into_inner();
+                let op_pair = inner_rules.next().unwrap();
+                let primary_pair = inner_rules.next().unwrap();
+                let expr = self.require_node(primary_pair)?;
+
+                let op = match op_pair.as_rule() {
+                    Rule::inc => Operator::PreInc,
+                    Rule::dec => Operator::PreDec,
+                    _ => bail!("Unexpected prefix operation: {:?}", op_pair.as_rule()),
+                };
+
+                let one = Node::Literal(Literal::Number(1.0));
+                let one_id = self.insert_spanned_node(one, span);
+                let node = Node::OpAssign { left: expr, op, right: one_id };
+                Some(self.insert_spanned_node(node, span))
             }
             Rule::return_expr => {
                 let inner = pair.into_inner().next();
@@ -330,9 +359,10 @@ impl Noder {
                 self.handle_pair(inner)?
             }
             Rule::assignment => {
-                // assignment = postfix "=" expr
+                // assignment = postfix assign_op expr
                 let mut inner_rules = pair.into_inner();
                 let lhs_pair = inner_rules.next().unwrap();
+                let assign_op_pair = inner_rules.next().unwrap();
                 let rhs_pair = inner_rules.next().unwrap();
 
                 // We expect the LHS to be a postfix expression. Parse it and
@@ -347,11 +377,40 @@ impl Noder {
                     None => return Ok(None),
                 };
 
-                // Accept any postfix as an assignment target; store the LHS node id
-                // as the target and the RHS as the assigned node. Validation of
-                // whether the target is writable happens at runtime.
-                let node = Node::Assign { target: lhs_node, node: value };
-                Some(self.insert_spanned_node(node, span))
+                // The assign_op rule contains the actual operator rule
+                let actual_op_pair = assign_op_pair.into_inner().next().unwrap();
+                let op_rule = actual_op_pair.as_rule();
+                
+                match op_rule {
+                    Rule::simple_assign => {
+                        // Regular assignment
+                        let node = Node::Assign { target: lhs_node, node: value };
+                        Some(self.insert_spanned_node(node, span))
+                    }
+                    _ => {
+                        // Compound assignment - convert to OpAssign
+                        let op = match op_rule {
+                            Rule::add_assign => Operator::AddAssign,
+                            Rule::sub_assign => Operator::SubAssign,
+                            Rule::mul_assign => Operator::MulAssign,
+                            Rule::div_assign => Operator::DivAssign,
+                            Rule::mod_assign => Operator::ModAssign,
+                            Rule::bitand_assign => Operator::BitAndAssign,
+                            Rule::bitor_assign => Operator::BitOrAssign,
+                            Rule::bitxor_assign => Operator::BitXorAssign,
+                            _ => bail!("Unexpected assignment operator rule: {:?}", op_rule),
+                        };
+                        
+                        let node = Node::OpAssign { left: lhs_node, op, right: value };
+                        Some(self.insert_spanned_node(node, span))
+                    }
+                }
+            }
+            Rule::assign_op | Rule::simple_assign | Rule::add_assign | Rule::sub_assign |
+            Rule::mul_assign | Rule::div_assign | Rule::mod_assign | Rule::bitand_assign |
+            Rule::bitor_assign | Rule::bitxor_assign => {
+                // These are handled by their parent assignment rule
+                None
             }
             Rule::logical_or => {
                 let inner_rules: Vec<_> = pair.into_inner().collect();
@@ -940,7 +999,7 @@ impl Noder {
                 let node = Node::Literal(Literal::Object { elements: windows });
                 Some(self.insert_spanned_node(node, span))
             }
-            Rule::call_suffix | Rule::index_suffix | Rule::field_suffix => None,
+            Rule::call_suffix | Rule::index_suffix | Rule::field_suffix | Rule::inc | Rule::dec => None,
         };
         Ok(r)
     }
