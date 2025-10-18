@@ -7,7 +7,7 @@ use string_interner::{StringInterner, backend::BucketBackend};
 use crate::{
     ast::{SpannedNode, TypeId, TypeIdent},
     noder::Noder,
-    printexpr::print_expr,
+    printexpr::pretty_print,
     runtime::{Runtime, types::Type},
 };
 
@@ -23,32 +23,7 @@ mod util;
 #[grammar = "grammar.pest"]
 pub struct UParser;
 
-const SCREEN_WIDTH: usize = 200;
-const SCREEN_HEIGHT: usize = 200;
-static mut FRAMEBUF: &'static mut [u32] = &mut [0; SCREEN_WIDTH * SCREEN_HEIGHT];
-static mut WINDOW: Option<minifb::Window> = None;
 fn main() {
-    unsafe {
-        WINDOW = Some(
-            minifb::Window::new(
-                "Ulang Graphics",
-                SCREEN_WIDTH,
-                SCREEN_HEIGHT,
-                minifb::WindowOptions::default(),
-            )
-            .unwrap(),
-        );
-        {
-            let this = &raw mut WINDOW;
-            match *this {
-                Some(ref mut x) => Some(x),
-                None => None,
-            }
-        }
-        .unwrap()
-        .update_with_buffer(FRAMEBUF, SCREEN_WIDTH, SCREEN_HEIGHT)
-        .unwrap();
-    }
     let args: Vec<String> = std::env::args().collect();
     let filename = args.get(1).map(|s| s.as_str()).unwrap_or("benchmark.u");
 
@@ -86,7 +61,7 @@ fn main() {
     let noder_duration = noder_start.elapsed();
     println!("Noded in {:?}", noder_duration);
     let (nodereg, strint, typereg) = noder.finish();
-    print_expr(&nodereg, &strint, 0, root);
+    pretty_print(&nodereg, &strint, root);
     let runtime_start = Instant::now();
     let mut runtime = Runtime::new(nodereg, strint, typereg, &buf);
     runtime.init_ministd();

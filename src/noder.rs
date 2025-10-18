@@ -1000,6 +1000,18 @@ impl Noder {
                 Some(self.insert_spanned_node(node, span))
             }
             Rule::call_suffix | Rule::index_suffix | Rule::field_suffix | Rule::inc | Rule::dec => None,
+            Rule::type_expr => {
+                // type_expr should just pass through to its inner rule
+                let inner = pair.into_inner().next().unwrap();
+                self.handle_pair(inner)?
+            }
+            Rule::array_type => {
+                // array_type = { "[" ~ type_expr ~ "]" }
+                let inner_type = pair.into_inner().next().unwrap();
+                let inner_node = self.require_node(inner_type)?;
+                // Create an array type node - for now we'll represent it as an array literal with the type
+                Some(self.insert_spanned_node(Node::Literal(Literal::Array { elements: vec![inner_node] }), span))
+            }
         };
         Ok(r)
     }

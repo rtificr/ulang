@@ -6,7 +6,7 @@ use crate::runtime::memory::Scope;
 use crate::runtime::value::Table;
 use crate::util::Pipeable;
 use crate::{
-    FRAMEBUF, NodeReg, SCREEN_HEIGHT, SCREEN_WIDTH, StringInt, TypeReg, WINDOW,
+    NodeReg, StringInt, TypeReg,
     ast::{Literal, Node, NodeId, StringId, TypeId, Operator},
     runtime::{
         memory::{Memory, ValPtr},
@@ -70,10 +70,10 @@ impl Runtime {
             }
             let a = &args[0];
             let b = &args[1];
-            let Value::Type(a_type_id) = a else {
+            let Some(a_type_id) = runtime.interpret_as_type_literal(a).ok() else {
                 bail!("First argument to supports must be a Type");
             };
-            let Value::Type(b_type_id) = b else {
+            let Some(b_type_id) = runtime.interpret_as_type_literal(b).ok() else {
                 bail!("Second argument to supports must be a Type");
             };
             let result = types::supports(&a_type_id, &b_type_id, &runtime.typereg)
@@ -127,108 +127,6 @@ impl Runtime {
         self.memory.alloc_global(
             crate::ast::StringId::from_raw(self.strint.get_or_intern("sleep")),
             Value::Builtin(sleep as BuiltinFn),
-        );
-
-        fn get_screen_width(runtime: &mut Runtime, args: Vec<Value>) -> anyhow::Result<Value> {
-            if !args.is_empty() {
-                bail!("get_screen_width expects 0 arguments, got {}", args.len());
-            }
-            Ok(Value::Number(SCREEN_WIDTH as f64))
-        }
-        self.memory.alloc_global(
-            crate::ast::StringId::from_raw(self.strint.get_or_intern("screenWidth")),
-            Value::Builtin(get_screen_width as BuiltinFn),
-        );
-        fn get_screen_height(runtime: &mut Runtime, args: Vec<Value>) -> anyhow::Result<Value> {
-            if !args.is_empty() {
-                bail!("get_screen_height expects 0 arguments, got {}", args.len());
-            }
-            Ok(Value::Number(SCREEN_HEIGHT as f64))
-        }
-        self.memory.alloc_global(
-            crate::ast::StringId::from_raw(self.strint.get_or_intern("screenHeight")),
-            Value::Builtin(get_screen_height as BuiltinFn),
-        );
-        fn set_pixel(runtime: &mut Runtime, args: Vec<Value>) -> anyhow::Result<Value> {
-            let xy = &args[0];
-            let Value::Tuple(elements) = xy else {
-                bail!("set_pixel expects a tuple of two numbers as the first argument");
-            };
-            let elements = elements
-                .iter()
-                .map(|e| runtime.memory.err_get(*e))
-                .collect::<Result<Vec<_>>>()?;
-            let x = if let Value::Number(n) = elements[0] {
-                *n as usize
-            } else {
-                0
-            };
-            let y = if let Value::Number(n) = elements[1] {
-                *n as usize
-            } else {
-                0
-            };
-
-            let color = &args[1];
-            let Value::Tuple(elements) = color else {
-                bail!("set_pixel expects a tuple of three numbers as the second argument");
-            };
-            let elements = elements
-                .iter()
-                .map(|e| runtime.memory.err_get(*e))
-                .collect::<Result<Vec<_>>>()?;
-            let r = if let Value::Number(n) = elements[2] {
-                (n * 255.0).clamp(0.0, 255.0) as u32
-            } else {
-                0
-            };
-            let g = if let Value::Number(n) = elements[1] {
-                (n * 255.0).clamp(0.0, 255.0) as u32
-            } else {
-                0
-            };
-            let b = if let Value::Number(n) = elements[0] {
-                (n * 255.0).clamp(0.0, 255.0) as u32
-            } else {
-                0
-            };
-
-            unsafe {
-                if x < SCREEN_WIDTH && y < SCREEN_HEIGHT {
-                    let offset = y * SCREEN_WIDTH + x;
-                    FRAMEBUF[offset] = r | g << 8 | b << 16;
-                }
-            }
-
-            Ok(Value::Nil)
-        }
-        self.memory.alloc_global(
-            crate::ast::StringId::from_raw(self.strint.get_or_intern("setPixel")),
-            Value::Builtin(set_pixel as BuiltinFn),
-        );
-        fn render(runtime: &mut Runtime, args: Vec<Value>) -> anyhow::Result<Value> {
-            if !args.is_empty() {
-                bail!("render expects 0 arguments, got {}", args.len());
-            }
-            unsafe {
-                // Directly access the WINDOW static in the unsafe block
-                if let Some(window) = {
-                    let this = &raw mut WINDOW;
-                    match *this {
-                        Some(ref mut x) => Some(x),
-                        None => None,
-                    }
-                } {
-                    window
-                        .update_with_buffer(FRAMEBUF, SCREEN_WIDTH, SCREEN_HEIGHT)
-                        .unwrap();
-                }
-            }
-            Ok(Value::Nil)
-        }
-        self.memory.alloc_global(
-            crate::ast::StringId::from_raw(self.strint.get_or_intern("render")),
-            Value::Builtin(render as BuiltinFn),
         );
     }
 
@@ -666,7 +564,7 @@ impl Runtime {
                             // Return the old value
                             Evaluation::new(self.malloc(old_value))
                         }
-                        Operator::AddAssign | Operator::SubAssign | Operator::MulAssign | 
+                        Operator::AddAssign | Operator::SubAssign | Operator::MulAssign |
                         Operator::DivAssign | Operator::ModAssign | Operator::BitAndAssign |
                         Operator::BitOrAssign | Operator::BitXorAssign => {
                             // Compound assignment: x += y becomes x = x + y

@@ -1,19 +1,2 @@
-let makeState = fn() {
-    let v = 0
-
-    return {
-        next = fn() return ++v
-        inc = fn(x) {
-            v = v + x
-            return v
-        }
-        get = v
-        ref = &v
-    }
-}
-
-let s = makeState()
-
-print(s.next())
-print(s.inc(5))
-print(s.get)
+let x: [number] = 42
+print(x)

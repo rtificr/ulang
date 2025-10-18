@@ -134,11 +134,6 @@ impl Type {
     }
 }
 pub fn supports(a_id: &TypeId, b_id: &TypeId, typereg: &TypeReg) -> Option<bool> {
-    match typereg.resolve(a_id.raw())? {
-        Type::Any => return Some(true),
-        Type::TBD => return Some(true),
-        _ => {}
-    }
     if a_id == b_id {
         return Some(true);
     }
@@ -161,11 +156,11 @@ pub fn supports(a_id: &TypeId, b_id: &TypeId, typereg: &TypeReg) -> Option<bool>
         }
         (_, Type::Union(types)) => {
             for ty in types {
-                if ty == a_id {
-                    return Some(true);
+                if !supports(a_id, ty, typereg)? {
+                    return Some(false)
                 }
             }
-            Some(false)
+            Some(true)
         }
         (Type::Nil, Type::Nil) => Some(true),
         (Type::Number, Type::Number) => Some(true),
